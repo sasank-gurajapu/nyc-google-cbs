@@ -113,7 +113,7 @@ export function VoiceAssistant({ onTranscript, lastResponse, isProcessing }: Voi
     usedVoiceRef.current = false;
   }, []);
 
-  // Speak text using Gemini Live API via WebSocket
+  // Speak text using Gemini Live API via WebSocket, with browser TTS fallback
   const speakWithGemini = useCallback(
     (text: string) => {
       if (!text) return;
@@ -139,6 +139,18 @@ export function VoiceAssistant({ onTranscript, lastResponse, isProcessing }: Voi
       const ws = new WebSocket(WS_TTS_URL);
       wsRef.current = ws;
 
+      let audioReceived = false;
+
+      // Fallback if WS doesn't deliver audio within 5s
+      const fallbackTimer = setTimeout(() => {
+        if (!audioReceived) {
+          console.warn('WS TTS timeout — falling back to browser TTS');
+          ws.close();
+          setIsSpeaking(false);
+          fallbackTTS(text);
+        }
+      }, 5000);
+
       ws.onopen = () => {
         ws.send(
           JSON.stringify({
@@ -153,6 +165,8 @@ export function VoiceAssistant({ onTranscript, lastResponse, isProcessing }: Voi
           const msg = JSON.parse(event.data);
 
           if (msg.audio) {
+            audioReceived = true;
+            clearTimeout(fallbackTimer);
             const buffer = decodeChunk(msg.audio);
             if (buffer) {
               audioQueueRef.current.push(buffer);
@@ -162,12 +176,22 @@ export function VoiceAssistant({ onTranscript, lastResponse, isProcessing }: Voi
             }
           }
 
-          if (msg.done || msg.error) {
+          if (msg.done) {
+            clearTimeout(fallbackTimer);
             wsRef.current = null;
-            // If queue is empty and not playing, mark done
             if (!isPlayingRef.current && audioQueueRef.current.length === 0) {
               setIsSpeaking(false);
               usedVoiceRef.current = false;
+            }
+          }
+
+          if (msg.error) {
+            clearTimeout(fallbackTimer);
+            wsRef.current = null;
+            setIsSpeaking(false);
+            if (!audioReceived) {
+              console.warn('Gemini Live TTS error — falling back to browser TTS');
+              fallbackTTS(text);
             }
           }
         } catch {
@@ -176,14 +200,15 @@ export function VoiceAssistant({ onTranscript, lastResponse, isProcessing }: Voi
       };
 
       ws.onerror = () => {
-        console.warn('Gemini Live TTS failed, falling back to browser TTS');
+        clearTimeout(fallbackTimer);
+        console.warn('Gemini Live TTS WS error — falling back to browser TTS');
         wsRef.current = null;
         setIsSpeaking(false);
-        // Fallback: browser speech synthesis
-        fallbackTTS(text);
+        if (!audioReceived) fallbackTTS(text);
       };
 
       ws.onclose = () => {
+        clearTimeout(fallbackTimer);
         if (wsRef.current === ws) wsRef.current = null;
       };
     },
@@ -248,13 +273,15 @@ export function VoiceAssistant({ onTranscript, lastResponse, isProcessing }: Voi
         onClick={toggleListening}
         disabled={isProcessing}
         size="icon"
-        variant={isListening ? 'destructive' : 'outline'}
-        className={`rounded-full w-10 h-10 flex-shrink-0 transition-all ${
-          isListening ? 'ring-2 ring-red-300 ring-offset-2 animate-pulse' : ''
-        }`}
+        variant="outline"
+        className="rounded-full w-10 h-10 flex-shrink-0 transition-all border-0"
+        style={isListening
+          ? { background: '#22c55e', color: 'white', boxShadow: '0 0 0 3px rgba(34,197,94,0.35)' }
+          : { background: '#ef4444', color: 'white' }
+        }
         title={isListening ? 'Stop listening' : 'Speak to GEOL'}
       >
-        {isListening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+        {isListening ? <Mic className="w-4 h-4" /> : <MicOff className="w-4 h-4" />}
       </Button>
 
       <Button

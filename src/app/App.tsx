@@ -120,8 +120,9 @@ export default function App() {
 
     navigator.geolocation.getCurrentPosition(
       async (pos) => {
-        const newPos = { lat: pos.coords.latitude, lng: pos.coords.longitude };
-        // Reverse geocode via server (uses Gemini AI)
+        const rawLat = pos.coords.latitude;
+        const rawLng = pos.coords.longitude;
+        // Try reverse geocode — always fall back to raw coords so the map always shows
         try {
           const resp = await fetch(`${API_BASE}/geocode`, {
             method: 'POST',
@@ -129,26 +130,36 @@ export default function App() {
               'Content-Type': 'application/json',
               Authorization: `Bearer ${publicAnonKey}`,
             },
-            body: JSON.stringify({ address: `${newPos.lat},${newPos.lng}` }),
+            body: JSON.stringify({ address: `${rawLat},${rawLng}` }),
           });
           if (resp.ok) {
             const data = await resp.json();
-            handleLocationChange(data.lat, data.lng, data.address);
-          } else {
-            handleLocationChange(newPos.lat, newPos.lng, 'Your current location');
+            if (typeof data.lat === 'number' && typeof data.lng === 'number') {
+              // Use stable setters directly to avoid stale-closure issues with handleLocationChange
+              setCurrentLocation({ lat: data.lat, lng: data.lng, address: data.address || 'Your location' });
+              setSelectedPlace(null);
+              setLocationState('ready');
+              return;
+            }
           }
         } catch {
-          handleLocationChange(newPos.lat, newPos.lng, 'Your current location');
+          // fall through to raw coords fallback
         }
+        // Fallback: raw GPS coords, no reverse geocode
+        setCurrentLocation({ lat: rawLat, lng: rawLng, address: 'Your current location' });
+        setSelectedPlace(null);
+        setLocationState('ready');
       },
       (err) => {
-        console.log('Geolocation error:', err.message);
-        addAssistantMessage(
-          "Hmm, I couldn't access your location — this often happens in embedded browsers. But no problem! Just type a city, address, or landmark and I'll take us there. 🗺️",
-        );
+        console.log('Geolocation error:', err.code, err.message);
+        const msg =
+          err.code === 1
+            ? "Location permission was denied. Please type a city, address, or landmark to get started!"
+            : "Couldn't get your location right now. Please type a city, address, or landmark instead!";
+        addAssistantMessage(msg);
         setLocationState('manual');
       },
-      { enableHighAccuracy: false, timeout: 10000, maximumAge: 0 }
+      { enableHighAccuracy: false, timeout: 12000, maximumAge: 30000 }
     );
   };
 
