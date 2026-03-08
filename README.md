@@ -3,6 +3,7 @@
 **NYC Build With AI Hackathon · Live Agents Category**
 
 **Team**: Vivek Gandhari · Abhishek Pillai · Sasank Gurajapu
+**Additional Members**: Gemini; Claude
 
 ---
 
