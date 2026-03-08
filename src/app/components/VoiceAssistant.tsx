@@ -15,10 +15,9 @@ export function VoiceAssistant({ onTranscript, lastResponse, isProcessing }: Voi
   const [isListening, setIsListening] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [speechSupported, setSpeechSupported] = useState(false);
-  const [autoSpeak, setAutoSpeak] = useState(false);
+  const [autoSpeak, setAutoSpeak] = useState(true); // on by default — speech is primary
 
   const recognitionRef = useRef<any>(null);
-  const usedVoiceRef = useRef(false);
   const audioContextRef = useRef<AudioContext | null>(null);
   const audioQueueRef = useRef<AudioBuffer[]>([]);
   const isPlayingRef = useRef(false);
@@ -37,8 +36,6 @@ export function VoiceAssistant({ onTranscript, lastResponse, isProcessing }: Voi
 
       recognition.onresult = (event: any) => {
         const transcript = event.results[0][0].transcript;
-        usedVoiceRef.current = true;
-        setAutoSpeak(true);
         onTranscript(transcript);
         setIsListening(false);
       };
@@ -110,7 +107,6 @@ export function VoiceAssistant({ onTranscript, lastResponse, isProcessing }: Voi
     audioQueueRef.current = [];
     isPlayingRef.current = false;
     setIsSpeaking(false);
-    usedVoiceRef.current = false;
   }, []);
 
   // Speak text using Gemini Live API via WebSocket, with browser TTS fallback
@@ -224,22 +220,20 @@ export function VoiceAssistant({ onTranscript, lastResponse, isProcessing }: Voi
     utterance.onstart = () => setIsSpeaking(true);
     utterance.onend = () => {
       setIsSpeaking(false);
-      usedVoiceRef.current = false;
     };
     utterance.onerror = () => {
       setIsSpeaking(false);
-      usedVoiceRef.current = false;
     };
     window.speechSynthesis.cancel();
     window.speechSynthesis.speak(utterance);
   };
 
-  // Auto-speak when a new response arrives (only if user used voice input)
+  // Auto-speak every new response when autoSpeak is on
   useEffect(() => {
-    if (lastResponse && autoSpeak && usedVoiceRef.current) {
+    if (lastResponse && autoSpeak) {
       speakWithGemini(lastResponse);
     }
-  }, [lastResponse, autoSpeak, speakWithGemini]);
+  }, [lastResponse]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const toggleListening = () => {
     if (!recognitionRef.current) return;
@@ -256,13 +250,12 @@ export function VoiceAssistant({ onTranscript, lastResponse, isProcessing }: Voi
     }
   };
 
-  const toggleSpeaking = () => {
+  const toggleMute = () => {
     if (isSpeaking) {
       stopSpeaking();
       window.speechSynthesis?.cancel();
-    } else if (lastResponse) {
-      speakWithGemini(lastResponse);
     }
+    setAutoSpeak((prev) => !prev);
   };
 
   if (!speechSupported) return null;
@@ -285,18 +278,24 @@ export function VoiceAssistant({ onTranscript, lastResponse, isProcessing }: Voi
       </Button>
 
       <Button
-        onClick={toggleSpeaking}
-        disabled={!lastResponse}
+        onClick={toggleMute}
         size="icon"
         variant="outline"
-        className="rounded-full w-10 h-10 flex-shrink-0"
-        title={isSpeaking ? 'Stop speaking' : 'Read last response aloud (Gemini voice)'}
+        className="rounded-full w-10 h-10 flex-shrink-0 transition-all border-0"
+        style={autoSpeak
+          ? { background: isSpeaking ? '#3b82f6' : '#6b7280', color: 'white' }
+          : { background: '#374151', color: '#9ca3af' }
+        }
+        title={autoSpeak ? (isSpeaking ? 'Speaking… click to mute' : 'Auto-speak on — click to mute') : 'Muted — click to unmute'}
       >
-        {isSpeaking ? <Volume2 className="w-4 h-4 animate-pulse" /> : <VolumeX className="w-4 h-4" />}
+        {autoSpeak
+          ? <Volume2 className={`w-4 h-4 ${isSpeaking ? 'animate-pulse' : ''}`} />
+          : <VolumeX className="w-4 h-4" />
+        }
       </Button>
 
       {isListening && (
-        <span className="text-xs text-destructive animate-pulse ml-1 whitespace-nowrap">
+        <span className="text-xs text-green-500 animate-pulse ml-1 whitespace-nowrap">
           🎤 Listening...
         </span>
       )}
