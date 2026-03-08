@@ -374,8 +374,13 @@ async def _response_receiver(
                     )
                     # After tool call, Gemini will continue with audio response
                     # The loop continues and will receive the follow-up audio
-                    logger.info("Tool call handled — waiting for Gemini's follow-up response")
+                    logger.info("Tool call handled — continuing to wait for Gemini's follow-up response")
+                    # Don't break - let the async for continue to receive follow-up responses
 
+        except StopAsyncIteration:
+            # Normal end of receive generator - restart it
+            logger.info("Receive generator exhausted, restarting...")
+            continue
         except Exception as e:
             if not stop_event.is_set():
                 logger.error(f"Receiver error: {e}")
