@@ -419,17 +419,17 @@ async def _handle_tool_calls(session, tool_call, send_to_client):
             # Send COMPACT summary to Gemini so it can speak about the results
             # without choking on 100KB+ of JSON
             compact_result = _summarize_for_gemini(result, tool_name)
-            compact_str = json.dumps(compact_result, default=str)
             logger.info(
                 f"Tool result: full={len(json.dumps(result, default=str))} chars, "
-                f"compact={len(compact_str)} chars"
+                f"compact={len(json.dumps(compact_result, default=str))} chars"
             )
 
+            # Pass the dict directly (not JSON string) to FunctionResponse
             function_responses.append(
                 types.FunctionResponse(
                     id=fc.id,
                     name=tool_name,
-                    response={"result": compact_str},
+                    response=compact_result,
                 )
             )
         except Exception as e:

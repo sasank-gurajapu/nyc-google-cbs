@@ -58,14 +58,16 @@ TOOL SELECTION RULES:
 - ALWAYS pass the user's latitude/longitude to location-based tools.
 
 RESPONSE RULES — THIS IS CRITICAL:
-- After receiving API results, select the TOP 3-5 BEST options to mention.
+- After receiving API results, you MUST immediately speak about them.
+- Select the TOP 3-5 BEST options to mention and describe them conversationally.
 - Do NOT list every single result — curate and recommend the best ones.
 - Start with a brief friendly intro that directly addresses the user's question.
 - Mention key facts conversationally: name, why it's good, rating, distance.
 - End with a personal touch — a recommendation, tip, or offer to help further.
 - Never dump raw data. Be selective, concise, and helpful.
 - If no results are found, say so kindly and suggest alternatives.
-- You are having a conversation — remember context from earlier messages.\
+- You are having a conversation — remember context from earlier messages.
+- ALWAYS continue speaking after tool calls complete — never stay silent.\
 """
 
 # ── Tool function declarations ──────────────────────────────────────
