@@ -5,7 +5,7 @@ import { Separator } from './ui/separator';
 import {
   MapPin, Landmark, Calendar, Home, Image as ImageIcon,
   Loader2, Sparkles, ChevronDown, ChevronUp, User, Bot,
-  Navigation, Keyboard, Mic, Clock, ArrowLeftRight
+  Navigation, Keyboard, Mic, Clock, ArrowLeftRight, ChevronLeft, ChevronRight
 } from 'lucide-react';
 
 export interface ChatMessage {
@@ -28,6 +28,7 @@ export interface ChatMessage {
   historicalStreetView?: {
     currentImage: string | null;
     historicalImage: string | null;
+    historicalImages?: Array<{ image: string; date: string; description?: string | null; source: string }> | null;
     location: string;
     historicalDescription?: string | null;
     photoDate?: string | null;
@@ -176,11 +177,12 @@ function HistoricalImage({ message }: { message: ChatMessage }) {
 
   // Historical Street View comparison
   if (message.historicalStreetView) {
-    const { currentImage, historicalImage, location, historicalDescription, photoDate, photoDescription, articleTitle, source } = message.historicalStreetView;
+    const { currentImage, historicalImage, historicalImages, location, historicalDescription, photoDate, photoDescription, articleTitle, source } = message.historicalStreetView;
     return (
       <HistoricalStreetViewComparison
         currentImage={currentImage}
         historicalImage={historicalImage}
+        historicalImages={historicalImages}
         location={location}
         historicalDescription={historicalDescription}
         photoDate={photoDate}
@@ -216,15 +218,16 @@ function HistoricalImage({ message }: { message: ChatMessage }) {
 function HistoricalStreetViewComparison({
   currentImage,
   historicalImage,
+  historicalImages,
   location,
   historicalDescription,
   photoDate,
   photoDescription,
-  articleTitle,
   source,
 }: {
   currentImage: string | null;
   historicalImage: string | null;
+  historicalImages?: Array<{ image: string; date: string; description?: string | null; source: string }> | null;
   location: string;
   historicalDescription?: string | null;
   photoDate?: string | null;
@@ -234,9 +237,24 @@ function HistoricalStreetViewComparison({
 }) {
   const [showCurrent, setShowCurrent] = useState(false);
   const [descExpanded, setDescExpanded] = useState(false);
+  const [selectedIdx, setSelectedIdx] = useState(0);
+
+  // Cap gallery at 5 images
+  const gallery = historicalImages && historicalImages.length > 0
+    ? historicalImages.slice(0, 5)
+    : null;
+
+  const goNext = () => setSelectedIdx(i => gallery ? (i + 1) % gallery.length : i);
+  const goPrev = () => setSelectedIdx(i => gallery ? (i - 1 + gallery.length) % gallery.length : i);
+
+  const activeHistorical = gallery ? gallery[selectedIdx] : null;
+  const displayHistorical = activeHistorical?.image || historicalImage;
+  const displayDate = activeHistorical?.date || photoDate;
+  const displayDesc = activeHistorical?.description || photoDescription;
+  const displaySource = activeHistorical?.source || source;
 
   // Text-only fallback: no historical image but we have a Gemini-generated description
-  if (!historicalImage && historicalDescription) {
+  if (!displayHistorical && historicalDescription) {
     return (
       <div className="mt-3 rounded-lg border overflow-hidden">
         <div className="flex items-center gap-2 px-3 py-2 bg-amber-50 border-b">
@@ -245,7 +263,7 @@ function HistoricalStreetViewComparison({
         </div>
         {currentImage && (
           <div className="relative">
-            <img src={currentImage} alt="Current street view" className="w-full" />
+            <img src={currentImage} alt="Current view" className="w-full" />
             <div className="absolute top-2 left-2">
               <Badge variant="secondary" className="text-xs shadow-md bg-blue-100 text-blue-800">
                 📍 Today
@@ -284,79 +302,118 @@ function HistoricalStreetViewComparison({
     );
   }
 
-  if (!historicalImage && !currentImage) return null;
+  if (!displayHistorical && !currentImage) return null;
 
-  const hasBoth = !!currentImage && !!historicalImage;
+  const hasBoth = !!currentImage && !!displayHistorical;
+  const isSlideshow = gallery && gallery.length > 1;
 
   return (
     <div className="mt-3 rounded-lg border overflow-hidden">
-      {/* Toggle header */}
-      {hasBoth && (
-        <div className="flex items-center justify-between px-3 py-2 bg-muted/50 border-b">
-          <div className="flex items-center gap-2">
-            <Clock className="w-4 h-4 text-amber-600" />
-            <span className="text-xs font-medium">Historical Street View</span>
-          </div>
+      {/* Header */}
+      <div className="flex items-center justify-between px-3 py-2 bg-muted/50 border-b">
+        <div className="flex items-center gap-2">
+          <Clock className="w-4 h-4 text-amber-500" />
+          <span className="text-xs font-medium">
+            {isSlideshow ? `Historical Photos (${gallery.length})` : 'Time Travel'}
+          </span>
+        </div>
+        {hasBoth && (
           <button
             onClick={() => setShowCurrent(!showCurrent)}
             className="flex items-center gap-1.5 text-xs font-medium text-primary hover:underline"
           >
             <ArrowLeftRight className="w-3 h-3" />
-            {showCurrent ? 'Show 1920s' : 'Show today'}
+            {showCurrent ? 'Show historical' : 'Show today'}
           </button>
-        </div>
-      )}
-
-      {/* Image */}
-      <div className="relative">
-        {hasBoth ? (
-          <>
-            <img
-              src={showCurrent ? currentImage! : historicalImage!}
-              alt={showCurrent ? 'Current street view' : 'Historical rendering'}
-              className="w-full"
-            />
-            <div className="absolute top-2 left-2">
-              <Badge
-                variant="secondary"
-                className={`text-xs shadow-md ${
-                  showCurrent ? 'bg-blue-100 text-blue-800' : 'bg-amber-100 text-amber-800'
-                }`}
-              >
-                {showCurrent ? '📍 Today' : photoDate ? `📷 ${photoDate}` : '🕰️ ~1920s'}
-              </Badge>
-            </div>
-          </>
-        ) : (
-          <img
-            src={(historicalImage || currentImage)!}
-            alt="Street view rendering"
-            className="w-full"
-          />
         )}
       </div>
 
-      {/* Footer */}
-      <div className="px-3 py-2 bg-muted/30 border-t space-y-0.5">
-        {source === 'wikipedia' && (photoDescription || articleTitle) && (
-          <p className="text-xs text-foreground/70 leading-snug">
-            {photoDescription || articleTitle}
-            {articleTitle && photoDescription && (
-              <span className="text-muted-foreground"> — {articleTitle}</span>
+      {/* Slideshow / Main image */}
+      <div className="relative bg-black">
+        {hasBoth && showCurrent ? (
+          <>
+            <img src={currentImage!} alt="Today" className="w-full object-contain max-h-72" />
+            <div className="absolute top-2 left-2">
+              <Badge variant="secondary" className="text-xs shadow-md bg-blue-100 text-blue-800">📍 Today</Badge>
+            </div>
+          </>
+        ) : displayHistorical ? (
+          <>
+            <img
+              src={displayHistorical}
+              alt={`Historical photo ${displayDate ?? ''}`}
+              className="w-full object-contain max-h-72"
+            />
+            {/* Date badge */}
+            <div className="absolute top-2 left-2">
+              <Badge variant="secondary" className="text-xs shadow-md bg-amber-100 text-amber-800">
+                {displayDate ? `📷 ${displayDate}` : '🕰️ Historical'}
+              </Badge>
+            </div>
+            {/* Today thumbnail */}
+            {currentImage && !showCurrent && (
+              <div className="absolute top-2 right-2">
+                <img
+                  src={currentImage}
+                  alt="Today"
+                  className="w-14 h-14 object-cover rounded border-2 border-white shadow-md cursor-pointer opacity-80 hover:opacity-100"
+                  onClick={() => setShowCurrent(true)}
+                  title="Click to see today"
+                />
+              </div>
             )}
-          </p>
+            {/* Slideshow arrows */}
+            {isSlideshow && (
+              <>
+                <button
+                  onClick={(e) => { e.stopPropagation(); goPrev(); setShowCurrent(false); }}
+                  className="absolute left-2 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-black/50 hover:bg-black/70 flex items-center justify-center text-white transition-colors"
+                >
+                  <ChevronLeft className="w-5 h-5" />
+                </button>
+                <button
+                  onClick={(e) => { e.stopPropagation(); goNext(); setShowCurrent(false); }}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-black/50 hover:bg-black/70 flex items-center justify-center text-white transition-colors"
+                >
+                  <ChevronRight className="w-5 h-5" />
+                </button>
+                {/* Dot indicators */}
+                <div className="absolute bottom-2 left-0 right-0 flex justify-center gap-1.5">
+                  {gallery.map((_, i) => (
+                    <button
+                      key={i}
+                      onClick={(e) => { e.stopPropagation(); setSelectedIdx(i); setShowCurrent(false); }}
+                      className={`w-2 h-2 rounded-full transition-all ${i === selectedIdx ? 'bg-white scale-125' : 'bg-white/50 hover:bg-white/80'}`}
+                    />
+                  ))}
+                </div>
+              </>
+            )}
+          </>
+        ) : currentImage ? (
+          <img src={currentImage} alt="Current" className="w-full object-contain max-h-72" />
+        ) : null}
+      </div>
+
+      {/* Caption + footer */}
+      <div className="px-3 py-2 bg-muted/30 border-t space-y-0.5">
+        {displayDesc && (
+          <p className="text-xs text-foreground/70 leading-snug">{displayDesc}</p>
         )}
-        <div className="flex items-center gap-1 text-xs text-muted-foreground">
-          <ImageIcon className="w-3 h-3 shrink-0" />
-          <span>
-            {source === 'wikipedia'
-              ? `Wikimedia Commons · ${photoDate ?? 'historical photo'}`
-              : source === 'gemini' || source === 'imagen'
-              ? 'AI-generated rendering · Gemini'
-              : hasBoth
-              ? 'Current view + historical rendering'
-              : 'Historical view'}
-          </span>
+        <div className="flex items-center justify-between gap-1 text-xs text-muted-foreground">
+          <div className="flex items-center gap-1">
+            <ImageIcon className="w-3 h-3 shrink-0" />
+            <span>
+              {displaySource === 'wikipedia'
+                ? `Wikipedia / Wikimedia Commons${displayDate ? ` · ${displayDate}` : ''}`
+                : displaySource === 'gemini' || displaySource === 'imagen'
+                ? 'AI-generated · Gemini'
+                : 'Historical view'}
+            </span>
+          </div>
+          {isSlideshow && (
+            <span className="font-medium">{selectedIdx + 1} / {gallery.length}</span>
+          )}
         </div>
       </div>
     </div>

@@ -463,6 +463,7 @@ export default function App() {
                 historicalStreetView: {
                   currentImage: place.photoUrl || histData.currentStreetView || null,
                   historicalImage: histData.historicalImage || null,
+                  historicalImages: histData.historicalImages || null,
                   location: place.name,
                   historicalDescription: histData.historicalDescription || null,
                   photoDate: histData.photoDate || null,
@@ -564,6 +565,7 @@ export default function App() {
                 historicalStreetView: {
                   currentImage: data.currentStreetView || null,
                   historicalImage: data.historicalImage || null,
+                  historicalImages: data.historicalImages || null,
                   location: data.location || currentLocation.address,
                   historicalDescription: data.historicalDescription || null,
                   photoDate: data.photoDate || null,
@@ -625,12 +627,7 @@ export default function App() {
                 <Globe className="w-5 h-5 text-white drop-shadow" />
               </div>
               <div>
-                <h1 className="text-xl font-bold tracking-tight">
-                  <span style={{ color: '#4285F4' }}>G</span>
-                  <span style={{ color: '#EA4335' }}>E</span>
-                  <span style={{ color: '#FBBC05' }}>O</span>
-                  <span style={{ color: '#34A853' }}>L</span>
-                </h1>
+                <h1 className="text-xl font-bold tracking-tight text-white">GEOL</h1>
                 <p className="text-xs text-muted-foreground">
                   Conversational Geographic Agent • Google Hackathon
                 </p>

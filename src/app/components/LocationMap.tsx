@@ -137,12 +137,12 @@ export function LocationMap({
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const searchWrapperRef = useRef<HTMLDivElement>(null);
   const placesLib = useMapsLibrary('places');
-  const [autocompleteService, setAutocompleteService] = useState<google.maps.places.AutocompleteService | null>(null);
+  const autocompleteServiceRef = useRef<google.maps.places.AutocompleteService | null>(null);
 
-  // Init AutocompleteService once Places library is loaded
+  // Init AutocompleteService once Places library is loaded (use ref to avoid re-render)
   useEffect(() => {
     if (!placesLib) return;
-    setAutocompleteService(new placesLib.AutocompleteService());
+    autocompleteServiceRef.current = new placesLib.AutocompleteService();
   }, [placesLib]);
 
   // Close suggestions on outside click
@@ -159,14 +159,14 @@ export function LocationMap({
   const handleSearchChange = useCallback((value: string) => {
     setSearchQuery(value);
     if (debounceRef.current) clearTimeout(debounceRef.current);
-    if (!value.trim() || !autocompleteService) {
+    if (!value.trim() || !autocompleteServiceRef.current) {
       setSuggestions([]);
       setShowSuggestions(false);
       return;
     }
     debounceRef.current = setTimeout(async () => {
       try {
-        const result = await autocompleteService.getPlacePredictions({
+        const result = await autocompleteServiceRef.current!.getPlacePredictions({
           input: value,
           types: ['geocode', 'establishment'],
         });
@@ -176,7 +176,7 @@ export function LocationMap({
         setSuggestions([]);
       }
     }, 280);
-  }, [autocompleteService]);
+  }, []);
 
   const handleSuggestionClick = useCallback((suggestion: google.maps.places.AutocompletePrediction) => {
     setShowSuggestions(false);
@@ -335,7 +335,7 @@ export function LocationMap({
   return (
     <div className="w-full h-full relative">
       {/* Search bar */}
-      <div className="absolute top-14 left-3 right-3 z-[1000] pointer-events-auto">
+      <div className="absolute top-3 left-3 right-3 z-[1000] pointer-events-auto">
         <div className="flex gap-2">
           <div className="flex-1 relative" ref={searchWrapperRef}>
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none z-10" />
@@ -348,7 +348,8 @@ export function LocationMap({
                 if (e.key === 'Escape') setShowSuggestions(false);
               }}
               onFocus={() => suggestions.length > 0 && setShowSuggestions(true)}
-              className="pl-9 pr-8 bg-white shadow-lg border-0 h-10 text-sm"
+              className="pl-9 pr-8 shadow-lg border-0 h-10 text-sm"
+              style={{ background: 'white', color: '#111827' }}
               onClick={(e) => e.stopPropagation()}
               autoComplete="off"
             />
@@ -357,7 +358,7 @@ export function LocationMap({
                 onClick={() => { setSearchQuery(''); setSuggestions([]); setShowSuggestions(false); }}
                 className="absolute right-2 top-1/2 -translate-y-1/2 z-10"
               >
-                <X className="w-4 h-4 text-muted-foreground" />
+                <X className="w-4 h-4 text-gray-400" />
               </button>
             )}
 
@@ -387,23 +388,20 @@ export function LocationMap({
               </div>
             )}
           </div>
-          <Button
+          <button
             onClick={() => { setShowSuggestions(false); handleSearch(); }}
             disabled={isSearching || !searchQuery.trim()}
-            size="icon"
-            className="h-10 w-10 shadow-lg shrink-0"
+            className="h-10 w-10 rounded-md shadow-lg shrink-0 flex items-center justify-center bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
           >
             {isSearching ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
-          </Button>
-          <Button
+          </button>
+          <button
             onClick={handleRecenter}
-            size="icon"
-            variant="outline"
-            className="h-10 w-10 shadow-lg bg-white shrink-0"
+            className="h-10 w-10 rounded-md shadow-lg shrink-0 flex items-center justify-center bg-white text-gray-700 hover:bg-gray-50"
             title="Re-center on your location"
           >
             <Navigation className="w-4 h-4" />
-          </Button>
+          </button>
         </div>
       </div>
 
@@ -426,7 +424,7 @@ export function LocationMap({
       )}
 
       {error && (
-        <div className="absolute top-28 left-3 right-3 z-[1000]">
+        <div className="absolute top-16 left-3 right-3 z-[1000]">
           <div className="bg-yellow-50 border border-yellow-300 text-yellow-800 px-3 py-2 rounded-lg text-xs shadow-lg">
             {error}
           </div>
@@ -435,7 +433,7 @@ export function LocationMap({
 
       <Map
         defaultCenter={position}
-        defaultZoom={15}
+        defaultZoom={12}
         mapId="geol-map"
         gestureHandling="greedy"
         disableDefaultUI={false}

@@ -660,31 +660,32 @@ async function fetchWikipediaThumbnail(query: string): Promise<{ url: string; ti
   }
 }
 
-// Helper: search Wikipedia article images for the oldest historical photo
-async function findHistoricalPhotoInWikipedia(articleTitle: string): Promise<{ url: string; date: string } | null> {
+interface HistoricalPhoto {
+  url: string;
+  date: string;
+  description?: string;
+  source: string;
+}
+
+// Helper: collect ALL historical photos from a Wikipedia article (years 1850–1969)
+async function findHistoricalPhotosInWikipedia(articleTitle: string): Promise<HistoricalPhoto[]> {
+  const results: HistoricalPhoto[] = [];
   try {
-    // Get list of all images used in the article
-    const listUrl = `https://en.wikipedia.org/w/api.php?action=query&titles=${encodeURIComponent(articleTitle)}&prop=images&imlimit=30&format=json`;
+    const listUrl = `https://en.wikipedia.org/w/api.php?action=query&titles=${encodeURIComponent(articleTitle)}&prop=images&imlimit=50&format=json`;
     const lr = await fetch(listUrl);
-    if (!lr.ok) return null;
+    if (!lr.ok) return results;
     const ld = await lr.json();
     const pages = ld.query?.pages;
-    if (!pages) return null;
+    if (!pages) return results;
     const page = Object.values(pages)[0] as any;
     const imageFiles: string[] = (page?.images || [])
       .map((i: any) => i.title as string)
-      .filter((t: string) => t.match(/\.(jpg|jpeg|png)$/i) && !t.match(/icon|logo|flag|map|svg|seal|coat|arms/i));
+      .filter((t: string) => t.match(/\.(jpg|jpeg|png)$/i) && !t.match(/icon|logo|flag|map|svg|seal|coat|arms|button|arrow/i));
 
-    if (imageFiles.length === 0) return null;
+    if (imageFiles.length === 0) return results;
 
-    // Fetch imageinfo for candidates to find old dates
     const chunks: string[][] = [];
-    for (let i = 0; i < Math.min(imageFiles.length, 20); i += 10) {
-      chunks.push(imageFiles.slice(i, i + 10));
-    }
-
-    let bestYear = Infinity;
-    let bestResult: { url: string; date: string; description?: string } | null = null;
+    for (let i = 0; i < Math.min(imageFiles.length, 30); i += 10) chunks.push(imageFiles.slice(i, i + 10));
 
     for (const chunk of chunks) {
       try {
@@ -694,34 +695,74 @@ async function findHistoricalPhotoInWikipedia(articleTitle: string): Promise<{ u
         const id = await ir.json();
         const infoPages = id.query?.pages;
         if (!infoPages) continue;
-
         for (const p of Object.values(infoPages) as any[]) {
           const info = p.imageinfo?.[0];
           if (!info?.url) continue;
           const raw = info.extmetadata?.DateTimeOriginal?.value || info.extmetadata?.DateTime?.value || "";
-          // Look for years 1850–1969 (genuinely historical)
           const m = raw.match(/\b(1[89]\d{2}|19[0-5]\d)\b/);
           if (m) {
-            const yr = parseInt(m[1]);
-            if (yr < bestYear) {
-              bestYear = yr;
-              const rawDesc = info.extmetadata?.ImageDescription?.value || info.extmetadata?.ObjectName?.value || "";
-              bestResult = {
-                url: info.url,
-                date: m[1],
-                description: rawDesc.replace(/<[^>]*>/g, "").trim().substring(0, 150) || undefined,
-              };
-            }
+            const rawDesc = info.extmetadata?.ImageDescription?.value || info.extmetadata?.ObjectName?.value || "";
+            results.push({
+              url: info.url,
+              date: m[1],
+              description: rawDesc.replace(/<[^>]*>/g, "").trim().substring(0, 150) || undefined,
+              source: "Wikipedia",
+            });
           }
         }
-      } catch { /* skip chunk */ }
+      } catch { /* skip */ }
     }
-
-    return bestResult;
-  } catch {
-    return null;
-  }
+    // Sort oldest first
+    results.sort((a, b) => parseInt(a.date) - parseInt(b.date));
+  } catch { /* ignore */ }
+  return results;
 }
+
+// Helper: search Wikimedia Commons for historical photos of a place
+async function searchWikimediaCommons(placeName: string): Promise<HistoricalPhoto[]> {
+  const results: HistoricalPhoto[] = [];
+  try {
+    const queries = [
+      `${placeName} historical photograph`,
+      `${placeName} old photograph`,
+    ];
+    const seen = new Set<string>();
+    for (const q of queries) {
+      const url = `https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrsearch=${encodeURIComponent(q)}&gsrnamespace=6&gsrlimit=8&prop=imageinfo&iiprop=url|extmetadata&format=json`;
+      const r = await fetch(url);
+      if (!r.ok) continue;
+      const d = await r.json();
+      const pages = d.query?.pages;
+      if (!pages) continue;
+      for (const p of Object.values(pages) as any[]) {
+        const info = p.imageinfo?.[0];
+        if (!info?.url || seen.has(info.url)) continue;
+        if (!info.url.match(/\.(jpg|jpeg|png)$/i)) continue;
+        const raw = info.extmetadata?.DateTimeOriginal?.value || info.extmetadata?.DateTime?.value || "";
+        const m = raw.match(/\b(1[89]\d{2}|19[0-5]\d)\b/);
+        if (m) {
+          seen.add(info.url);
+          const rawDesc = info.extmetadata?.ImageDescription?.value || info.extmetadata?.ObjectName?.value || "";
+          results.push({
+            url: info.url,
+            date: m[1],
+            description: rawDesc.replace(/<[^>]*>/g, "").trim().substring(0, 150) || undefined,
+            source: "Wikimedia Commons",
+          });
+        }
+      }
+    }
+    results.sort((a, b) => parseInt(a.date) - parseInt(b.date));
+  } catch { /* ignore */ }
+  return results;
+}
+
+// Keep for backward compat (returns the oldest single photo)
+async function findHistoricalPhotoInWikipedia(articleTitle: string): Promise<{ url: string; date: string; description?: string } | null> {
+  const all = await findHistoricalPhotosInWikipedia(articleTitle);
+  return all.length > 0 ? all[0] : null;
+}
+
 
 // Historical endpoint — searches for real historical photos first, then generates with Gemini
 app.post("/make-server-3c4885b3/historical-streetview", async (c) => {
@@ -754,41 +795,61 @@ app.post("/make-server-3c4885b3/historical-streetview", async (c) => {
       }
     }
 
-    // ── Step 1: Wikipedia thumbnail (fallback current photo if no Places photo) ──
+    // ── Steps 1 & 2: Wikipedia thumbnail + all historical photos ────────────────
     let wikiThumb: { url: string; title: string } | null = null;
     let wikiImageBase64: string | null = null;
     let wikiImageMime = "image/jpeg";
+    let allHistoricalPhotos: HistoricalPhoto[] = [];
 
-    // Only search Wikipedia if we don't already have a Places photo
-    if (!placesPhotoBase64) {
-      console.log(`Searching Wikipedia for: "${placeName}"`);
-      wikiThumb = await fetchWikipediaThumbnail(placeName);
-      if (wikiThumb) {
-        console.log(`Wikipedia thumbnail found: ${wikiThumb.url}`);
+    console.log(`Searching Wikipedia for: "${placeName}"`);
+    wikiThumb = await fetchWikipediaThumbnail(placeName);
+    if (wikiThumb) {
+      console.log(`Wikipedia thumbnail found: ${wikiThumb.url}`);
+      if (!placesPhotoBase64) {
         const img = await fetchImageAsBase64(wikiThumb.url);
         if (img) { wikiImageBase64 = img.base64; wikiImageMime = img.mimeType; }
       }
+      // Collect all historical photos from the article + Wikimedia Commons in parallel
+      const [wikiPhotos, commonsPhotos] = await Promise.all([
+        findHistoricalPhotosInWikipedia(wikiThumb.title),
+        searchWikimediaCommons(placeName),
+      ]);
+      // Merge, deduplicate by URL, sort oldest first, cap at 8
+      const seen = new Set<string>();
+      for (const p of [...wikiPhotos, ...commonsPhotos]) {
+        if (!seen.has(p.url)) { seen.add(p.url); allHistoricalPhotos.push(p); }
+      }
+      allHistoricalPhotos.sort((a, b) => parseInt(a.date) - parseInt(b.date));
+      allHistoricalPhotos = allHistoricalPhotos.slice(0, 8);
+      console.log(`Found ${allHistoricalPhotos.length} historical photos total`);
     }
 
-    // ── Step 2: Search for real historical photos in the Wikipedia article ────────
-    const wikiArticleTitle = wikiThumb?.title || null;
-    if (wikiArticleTitle) {
-      console.log(`Searching Wikipedia article images for historical photos: "${wikiArticleTitle}"`);
-      const hist = await findHistoricalPhotoInWikipedia(wikiArticleTitle);
-      if (hist) {
-        console.log(`Found real historical photo from ${hist.date}: ${hist.url}`);
-        const img = await fetchImageAsBase64(hist.url);
-        if (img) {
-          return c.json({
-            historicalImage: `data:${img.mimeType};base64,${img.base64}`,
-            currentStreetView: wikiThumb!.url,
-            photoDate: hist.date,
-            photoDescription: hist.description || null,
-            articleTitle: wikiArticleTitle,
-            source: "wikipedia",
-            location: locationName,
-          });
-        }
+    // If we have real historical photos, fetch them as base64 and return all
+    if (allHistoricalPhotos.length > 0) {
+      const fetched = await Promise.all(
+        allHistoricalPhotos.map(async (p) => {
+          const img = await fetchImageAsBase64(p.url);
+          if (!img) return null;
+          return {
+            image: `data:${img.mimeType};base64,${img.base64}`,
+            date: p.date,
+            description: p.description || null,
+            source: p.source,
+          };
+        })
+      );
+      const valid = fetched.filter(Boolean);
+      if (valid.length > 0) {
+        return c.json({
+          historicalImage: valid[0]!.image,        // primary (oldest) for backward compat
+          historicalImages: valid,                  // full gallery
+          currentStreetView: placesPhotoUrl || wikiThumb?.url || null,
+          photoDate: valid[0]!.date,
+          photoDescription: valid[0]!.description,
+          articleTitle: wikiThumb?.title || null,
+          source: "wikipedia",
+          location: locationName,
+        });
       }
     }
 
