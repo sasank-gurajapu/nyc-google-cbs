@@ -89,8 +89,8 @@ export default function Home() {
       micStartedRef.current = true;
       audio
         .startMic((base64Pcm) => {
-          // Also check the ref synchronously in case React state hasn't caught up
-          if (live.isSpeakingRef.current) return;
+          // Send audio continuously for barge-in capability
+          // We removed the isSpeakingRef.current block here
           live.sendAudio(base64Pcm);
         })
         .catch((err) => {
