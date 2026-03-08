@@ -296,8 +296,25 @@ async def _response_receiver(
                 if stop_event.is_set():
                     break
 
+                # Log all response types for debugging
+                resp_types = []
+                if response.data:
+                    resp_types.append(f"audio({len(response.data)})")
+                if response.server_content:
+                    if response.server_content.input_transcription:
+                        resp_types.append("input_transcript")
+                    if response.server_content.output_transcription:
+                        resp_types.append("output_transcript")
+                    if response.server_content.turn_complete:
+                        resp_types.append("turn_complete")
+                if response.tool_call:
+                    resp_types.append(f"tool_call({len(response.tool_call.function_calls)})")
+                if resp_types:
+                    logger.debug(f"Response: {', '.join(resp_types)}")
+
                 # ── Audio data from Gemini (it's speaking) ──
                 if response.data is not None and len(response.data) > 0:
+                    logger.debug(f"Received audio chunk: {len(response.data)} bytes")
                     # Mute mic while Gemini is producing audio
                     mic_muted.set()
 
@@ -329,6 +346,7 @@ async def _response_receiver(
                     and response.server_content.output_transcription
                     and response.server_content.output_transcription.text
                 ):
+                    logger.debug(f"Output transcription: {response.server_content.output_transcription.text[:100]}...")
                     await send_to_client({
                         "type": "transcript",
                         "text": response.server_content.output_transcription.text,
@@ -354,6 +372,9 @@ async def _response_receiver(
                     await _handle_tool_calls(
                         session, response.tool_call, send_to_client
                     )
+                    # After tool call, Gemini will continue with audio response
+                    # The loop continues and will receive the follow-up audio
+                    logger.info("Tool call handled — waiting for Gemini's follow-up response")
 
         except Exception as e:
             if not stop_event.is_set():
