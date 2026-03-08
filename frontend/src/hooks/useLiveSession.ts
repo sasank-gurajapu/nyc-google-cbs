@@ -8,8 +8,15 @@
 import { useCallback, useRef, useState } from "react";
 import type { StructuredDataItem, ToolUsed } from "@/lib/api";
 
-const WS_URL =
-  process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8000/ws/live";
+// Construct WebSocket URL based on current origin for production, or use localhost for dev
+const getWsUrl = () => {
+  if (typeof window === "undefined") return "ws://localhost:8000/ws/live";
+  if (process.env.NEXT_PUBLIC_WS_URL) return process.env.NEXT_PUBLIC_WS_URL;
+  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  return `${protocol}//${window.location.host}/ws/live`;
+};
+
+const WS_URL = getWsUrl();
 
 export type LiveSessionStatus =
   | "disconnected"

@@ -1,4 +1,5 @@
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+// In production, use relative URLs (same origin). In dev, use localhost:8000
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "";
 
 export interface ChatMessage {
   role: "user" | "assistant";
