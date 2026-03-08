@@ -3,83 +3,93 @@
   Run `npm i` to install the dependencies.
 
   Run `npm run dev` to start the development server.
+# 🗺️ Geol — AI-Powered Place Exploration Agent
 
-  # 🗺️ Geol — Explore Cities the Way You Actually Think
-
-**NYC Build With AI Hackathon · Live Agents Category**
-
-**Team**: Vivek Gandhari · Abhishek Pillai · Sasank Gurajapu · Anand Singh
-
-**Additional Team Members** Gemini, Claude, Figma!
+**Team:** Vivek Gandhari · Abhishek Pillai · Sasank Gurajapu · Anand Singh
+**Additional Team Members:** Gemini · Claude · Figma
 
 ---
 
-## The Problem
+## Problem Statement
 
-Exploring a city is a *subjective* experience. Sometimes you know exactly where you're going — but most of the time, you're thinking in feelings and vibes, not keywords.
+People visit or research places every day — neighborhoods, cities, landmarks — but the experience of *discovering* a place is fragmented. You search Google for reviews, flip to Zillow for real estate, visit Wikipedia for history, and watch YouTube for visuals. There's no single immersive, conversational experience that lets you **explore a place as a story**.
 
-> *"What are some new and upcoming coffee places in Upper West Side?"*
-> *"Best dentist under $100 in Chelsea?"*
-> *"Somewhere calm and cozy to work this afternoon…"*
+Travelers, remote workers, relocators, and the simply curious have no way to ask *"tell me everything interesting about this corner of the world"* — and get a rich, multi-layered, voice-driven answer back.
 
-These are the prompts that reflect how we **actually think** about finding places. Traditional map search doesn't get it — it's built for keywords, not conversations.
+**Geol** solves this: a voice-first AI agent that transforms any place into a living, breathing narrative — surfacing fun facts, local events, real estate context, and AI-reconstructed historical imagery of how that place looked across time.
 
 ---
 
-## The Solution
+## Solution
 
-**VoiceMap** is a real-time conversational voice agent that understands the *subjective* way you look for places — and talks back.
+Geol is a conversational place exploration agent. Users speak or type a location — a city, neighborhood, street, or landmark — and the agent becomes a **storytelling guide** that takes them on a journey through that place across multiple dimensions:
 
-Speak naturally. Get interrupted? It adapts. Ask follow-ups? It remembers. The agent converses with you to understand your preferences, then surfaces the best options for *you* to decide.
-
-> **"Hey, I'm looking for somewhere cozy to work — quiet, good coffee, laptop-friendly"**
-> → *"Got it! Where are you right now?"*
-> → *"Downtown Boston"*
-> → *"Found three great spots. Thinking Cup on Tremont has reviews calling it 'peaceful' and 'perfect for laptops'…"*
+- 🎙️ **Voice-in, voice-out** — Natural conversation via Web Speech API
+- 🧠 **Agentic AI** — Google Gemini orchestrates multi-tool reasoning to gather, synthesize, and narrate
+- 📍 **Location-aware** — Can auto-detect user location or accept any typed/spoken input
+- 🏛️ **Historical Time Travel** — Imagen 3-generated imagery shows how a place looked in different eras
+- 🗺️ **Street View** — Live current imagery via Google Street View
+- 🎉 **Nearby Places** — Points of interest and things to explore around any location
+- 🤩 **Fun Facts & Lore** — Surprising, delightful stories about the place
 
 ---
 
-## How It Works
+## Tech Stack & Architecture
 
 ```
-User speaks naturally
-        ↓
-Gemini Multimodal Live API (real-time bidirectional audio)
-        ↓
-Intent extraction: place type + qualitative attributes + location
-        ↓
-Google Places API → fetch places + reviews
-        ↓
-Gemini Flash analyzes reviews semantically (not keyword matching)
-        ↓
-Agent speaks results conversationally + visual cards appear
-        ↓
-One tap → Google Maps navigation
+┌─────────────────────────────────────────────────────────────┐
+│                         FRONTEND                            │
+│  React (TypeScript) · Vite · Tailwind CSS v4 · shadcn/ui   │
+│  @vis.gl/react-google-maps · Web Speech API                 │
+└────────────────────────┬────────────────────────────────────┘
+                         │ REST
+┌────────────────────────▼────────────────────────────────────┐
+│                   BACKEND / AGENTIC CORE                    │
+│  Deno · Hono · Supabase Edge Functions                      │
+│  Gemini 2.0 Flash → Flash Lite → 1.5 Flash 8B (fallback)   │
+│  Orchestrates tool calls based on user intent               │
+└──┬─────────────────┬──────────────────┬─────────────────────┘
+   │                 │                  │
+┌──▼──────────┐ ┌────▼──────────┐ ┌────▼──────────────────┐
+│  Places &   │ │  Geocoding &  │ │  Historical Imagery   │
+│  Street View│ │  Street View  │ │                       │
+│             │ │               │ │  Imagen 3.0 Generate  │
+│ Places API  │ │ Geocoding API │ │  002 → 001 →          │
+│ (New) +     │ │ + Gemini      │ │  gemini-2.0-flash-exp │
+│ Street View │ │ fallback      │ │  (fallback chain)     │
+│ Static API  │ │               │ │                       │
+└─────────────┘ └───────────────┘ └───────────────────────┘
 ```
 
-- **AI**: Gemini Multimodal Live API (conversation), Vertex AI Gemini 1.5 Flash (review analysis)
-- **Maps**: Google Places API (New) — text search + place details + reviews
-- **Backend**: Node.js + Express on Cloud Run (WebSocket support)
-- **Frontend**: Vanilla JS / React + Tailwind, WebRTC audio streaming
-- **Hosting**: Google Cloud Run + Firebase Hosting
+### Google APIs
 
----
+| API | Usage |
+|---|---|
+| Maps JavaScript API | Interactive map rendering |
+| Places API (New) | Nearby POI fetching |
+| Street View Static API | Current street view images |
+| Geocoding API | Address/coordinate resolution (Gemini fallback) |
+| Gemini API | Conversational AI, geocoding, historical image generation |
+| Imagen 3 API | Historical image generation |
 
-## Example Interactions
+### Agent Flow
 
-**Finding a workspace**
-> *"Where can I work for a few hours? I like some background noise, good WiFi."*
-> → Agent finds cafes, filters by reviews mentioning WiFi + outlets + long-stay welcome.
-
-**Date night**
-> *"I want to take someone somewhere romantic for dinner tonight — Italian, not too pricey."*
-> → Agent surfaces candlelit spots with "intimate" and "date night" in reviews.
-
-**Hidden gems**
-> *"Show me a coffee shop that's not touristy, somewhere locals actually go."*
-> → Agent scores places by local reviewer concentration and low chain-ness.
-
----
-
-*Built at NYC Build With AI Hackathon · March 2026 · Live Agents Category*
-*8–10 hour build · Google Cloud · Gemini Live API · Places API*
+```
+User speaks "Tell me about Brooklyn Bridge"
+        ↓
+  Speech → Text (Web Speech API)
+        ↓
+  Gemini 2.0 Flash receives intent + location context
+        ↓
+  Gemini orchestrates parallel tool calls:
+    ├── Places API (New) → nearby POIs, descriptions
+    ├── Geocoding API → coordinate resolution
+    ├── Street View Static API → current place imagery
+    └── Imagen 3 → "Brooklyn Bridge in 1890, sepia photograph"
+        ↓
+  Gemini synthesizes into narrative story
+        ↓
+  Web Speech API speaks the response
+  Google Maps pins the location
+  Historical images render in timeline carousel
+```
