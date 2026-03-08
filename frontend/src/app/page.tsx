@@ -51,15 +51,23 @@ export default function Home() {
     );
   }, []);
 
-  // Wire audio playback to live session
+  // ─── Setup audio reception ───────────────────────────────────────
   useEffect(() => {
+    // Whenever the live session receives an audio chunk, play it
     console.log("[Page] Wiring audio.playAudio to live.onAudioReceived");
     live.onAudioReceived.current = audio.playAudio;
   }, [audio.playAudio, live.onAudioReceived]);
 
+  useEffect(() => {
+    // When live session is interrupted by user barge-in, clear playback queue
+    console.log("[Page] Wiring audio.clearPlayback to live.onInterrupted");
+    live.onInterrupted.current = audio.clearPlayback;
+  }, [audio.clearPlayback, live.onInterrupted]);
+
   // Sync mic muting with Gemini speaking state to prevent echo interruption
   useEffect(() => {
-    audio.micMutedRef.current = live.isSpeaking;
+    // We no longer mute the mic when Gemini speaks to allow natural barge-in
+    // audio.micMutedRef.current = live.isSpeaking;
   }, [live.isSpeaking, audio.micMutedRef]);
 
   // Send user location to Gemini once connected

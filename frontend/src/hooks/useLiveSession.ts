@@ -51,7 +51,8 @@ export interface UseLiveSessionReturn {
   sendAudio: (base64Pcm: string) => void;
   sendText: (text: string) => void;
   sendLocation: (latitude: number, longitude: number) => void;
-  onAudioReceived: React.MutableRefObject<((base64Pcm: string) => void) | null>;
+  onAudioReceived: React.MutableRefObject<((base64Pcm: string) => void) | undefined>;
+  onInterrupted: React.MutableRefObject<(() => void) | undefined>;
 }
 
 export function useLiveSession(): UseLiveSessionReturn {
@@ -64,7 +65,11 @@ export function useLiveSession(): UseLiveSessionReturn {
   const speakingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const wsRef = useRef<WebSocket | null>(null);
-  const onAudioReceived = useRef<((base64Pcm: string) => void) | null>(null);
+  const onAudioReceived = useRef<((base64Pcm: string) => void) | undefined>(undefined);
+  const onInterrupted = useRef<(() => void) | undefined>(undefined);
+
+  // Use a ref to track if we received initial chunks to handle first-byte latency
+  const initialChunksRef = useRef<boolean>(false);
 
   const connect = useCallback(() => {
     if (wsRef.current) return;
@@ -126,6 +131,15 @@ export function useLiveSession(): UseLiveSessionReturn {
           setIsSpeaking(false);
           isSpeakingRef.current = false;
         }, 500);
+        break;
+
+      case "interrupted":
+        console.log("[Live] Interrupted by user barge-in!");
+        if (onInterrupted.current) {
+          onInterrupted.current();
+        }
+        setIsSpeaking(false);
+        isSpeakingRef.current = false;
         break;
 
       case "transcript":
@@ -233,11 +247,12 @@ export function useLiveSession(): UseLiveSessionReturn {
     transcripts,
     toolCalls,
     structuredData,
+    onAudioReceived,
+    onInterrupted,
     connect,
     disconnect,
     sendAudio,
     sendText,
     sendLocation,
-    onAudioReceived,
   };
 }

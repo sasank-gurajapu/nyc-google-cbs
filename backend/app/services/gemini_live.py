@@ -28,11 +28,11 @@ logger = logging.getLogger(__name__)
 # The Live API model
 LIVE_MODEL = "gemini-2.5-flash-native-audio-latest"
 
-# Audio batching: accumulate small chunks for at least this many bytes
-# before sending to the browser (reduces WebSocket message count).
-# 4800 bytes = 200ms of 24kHz 16-bit mono audio
-AUDIO_BATCH_MIN_BYTES = 4800
-AUDIO_BATCH_MAX_WAIT = 0.15  # seconds — flush even if under min bytes
+# Audio batching: accumulate small chunks to reduce WebSocket overhead,
+# but keep it low for real-time responsiveness.
+# 2400 bytes = 100ms of 24kHz 16-bit mono audio
+AUDIO_BATCH_MIN_BYTES = 2400
+AUDIO_BATCH_MAX_WAIT = 0.05  # seconds — flush very quickly for lower latency
 
 
 def _summarize_for_gemini(result: dict, tool_name: str) -> dict:
@@ -189,13 +189,6 @@ async def run_live_session(
         output_audio_transcription=types.AudioTranscriptionConfig(),
     )
 
-    # Shared flag: when set, _audio_sender will NOT forward mic audio to Gemini.
-    # This prevents echo from the speaker being picked up by the mic and
-    # causing Gemini's VAD to think the user is interrupting.
-    mic_muted = asyncio.Event()  # SET = muted, CLEAR = unmuted
-    # Start unmuted
-    mic_muted.clear()
-
     try:
         async with client.aio.live.connect(model=LIVE_MODEL, config=config) as session:
             logger.info("Gemini Live session connected")
@@ -203,10 +196,10 @@ async def run_live_session(
 
             # Run sender and receiver concurrently
             sender_task = asyncio.create_task(
-                _audio_sender(session, audio_queue, stop_event, mic_muted)
+                _audio_sender(session, audio_queue, stop_event)
             )
             receiver_task = asyncio.create_task(
-                _response_receiver(session, send_to_client, stop_event, mic_muted)
+                _response_receiver(session, send_to_client, stop_event)
             )
 
             # Wait until stop is signaled or either task finishes
@@ -240,21 +233,14 @@ async def _audio_sender(
     session,
     audio_queue: asyncio.Queue,
     stop_event: asyncio.Event,
-    mic_muted: asyncio.Event,
 ):
-    """Send audio chunks from the browser to Gemini Live."""
+    """Wait for audio from the browser and send it to Gemini Live."""
     while not stop_event.is_set():
-        try:
-            msg = await asyncio.wait_for(audio_queue.get(), timeout=0.1)
-        except asyncio.TimeoutError:
-            continue
+        msg = await audio_queue.get()
+        if msg is None or msg.get("type") == "stop":
+            break
 
-        if msg.get("type") == "audio":
-            # If mic is muted (Gemini is speaking), drop the audio to prevent
-            # echo-based interruption via Gemini's VAD
-            if mic_muted.is_set():
-                continue
-
+        if msg.get("type") == "audio" and "data" in msg:
             # Decode base64 PCM audio and send to Gemini
             audio_bytes = base64.b64decode(msg["data"])
             await session.send_realtime_input(
@@ -272,7 +258,6 @@ async def _response_receiver(
     session,
     send_to_client: Callable[[dict], Coroutine[Any, Any, None]],
     stop_event: asyncio.Event,
-    mic_muted: asyncio.Event,
 ):
     """Receive responses from Gemini Live and forward to the browser."""
 
@@ -315,8 +300,6 @@ async def _response_receiver(
                 # ── Audio data from Gemini (it's speaking) ──
                 if response.data is not None and len(response.data) > 0:
                     logger.debug(f"Received audio chunk: {len(response.data)} bytes")
-                    # Mute mic while Gemini is producing audio
-                    mic_muted.set()
 
                     # Accumulate audio into a batch
                     audio_buffer.extend(response.data)
@@ -357,18 +340,18 @@ async def _response_receiver(
                     # Flush any remaining audio before signaling turn complete
                     await flush_audio()
                     await send_to_client({"type": "turn_complete"})
-                    # Unmute mic after a brief delay to let audio finish playing
-                    # on the client before re-enabling mic input
-                    await asyncio.sleep(0.3)
-                    mic_muted.clear()
-                    logger.info("Turn complete — mic unmuted")
+                    logger.info("Turn complete")
+
+                # ── Interrupted (barge-in) ──
+                if response.server_content and response.server_content.interrupted:
+                    logger.info("Bot was interrupted by user!")
+                    await send_to_client({"type": "interrupted"})
 
                 # ── Tool calls (Gemini wants to call a Maps API) ──
                 if response.tool_call:
                     # Flush any pending audio before handling tool calls
                     await flush_audio()
-                    # Mute mic during tool execution
-                    mic_muted.set()
+                    
                     await _handle_tool_calls(
                         session, response.tool_call, send_to_client
                     )
@@ -443,6 +426,6 @@ async def _handle_tool_calls(session, tool_call, send_to_client):
                 )
             )
 
-    # Send tool results back to Gemini Live so it can continue speaking
+    # Send tool responses back to Gemini Live so it can continue speaking
     await session.send_tool_response(function_responses=function_responses)
     logger.info("Tool responses sent back to Gemini — waiting for audio response")

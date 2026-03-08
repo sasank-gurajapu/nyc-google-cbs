@@ -51,6 +51,7 @@ export interface UseAudioStreamReturn {
   startMic: (onChunk: (base64Pcm: string) => void) => Promise<void>;
   stopMic: () => void;
   playAudio: (base64Pcm: string) => void;
+  clearPlayback: () => void;
   stopPlayback: () => void;
   /** Set to true to suppress sending mic audio (but keep recording for amplitude). */
   micMutedRef: React.MutableRefObject<boolean>;
@@ -272,6 +273,22 @@ export function useAudioStream(): UseAudioStreamReturn {
     [processQueue]
   );
 
+  const clearPlayback = useCallback(() => {
+    pendingChunksRef.current = [];
+    if (playbackCtxRef.current && playbackCtxRef.current.state !== "closed") {
+      // Suspend and close to instantly stop all currently playing nodes
+      const oldCtx = playbackCtxRef.current;
+      oldCtx.close().catch(e => console.warn("[Audio] Error closing interrupted context:", e));
+      
+      // Create a fresh context for future audio
+      playbackCtxRef.current = new AudioContext({ sampleRate: SPEAKER_SAMPLE_RATE });
+      nextPlayTimeRef.current = 0;
+      resumePromiseRef.current = null;
+      processingRef.current = false;
+      console.log("[Audio] Playback cleared due to interruption");
+    }
+  }, []);
+
   const stopPlayback = useCallback(() => {
     pendingChunksRef.current = [];
     processingRef.current = false;
@@ -290,6 +307,7 @@ export function useAudioStream(): UseAudioStreamReturn {
     startMic,
     stopMic,
     playAudio,
+    clearPlayback,
     stopPlayback,
     micMutedRef,
   };
