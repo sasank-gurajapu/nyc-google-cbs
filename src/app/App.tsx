@@ -97,8 +97,9 @@ export default function App() {
 
   const handleLocationChange = useCallback(
     (lat: number, lng: number, address: string) => {
+      placeSearchActiveRef.current = false; // reset: let map fetch landmarks again
       setCurrentLocation({ lat, lng, address });
-      setSelectedPlace(null); // clear when navigating to a new location via search
+      setSelectedPlace(null);
       if (locationState !== 'ready') {
         setLocationState('ready');
       }
@@ -545,7 +546,8 @@ export default function App() {
         return;
       }
 
-      // Update map pins with search results
+      // Lock search results — prevent the map's auto-fetch from overriding these pins
+      placeSearchActiveRef.current = true;
       setPlaces(results);
 
       // Lock pin to first result
@@ -589,7 +591,11 @@ export default function App() {
     if (!isProcessing) sendMessage(question);
   };
 
+  // When a place search is active, block the map's auto-fetch from overriding results
+  const placeSearchActiveRef = useRef(false);
+
   const handlePlacesLoaded = useCallback((newPlaces: PlaceOfInterest[]) => {
+    if (placeSearchActiveRef.current) return; // search results take priority
     setPlaces(newPlaces);
   }, []);
 
