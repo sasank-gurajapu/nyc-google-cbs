@@ -393,9 +393,12 @@ export function LocationMap({
           <button
             onClick={() => { setShowSuggestions(false); handleSearch(); }}
             disabled={isSearching || !searchQuery.trim()}
-            className="h-10 w-10 rounded-md shadow-lg shrink-0 flex items-center justify-center bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+            className="h-10 w-10 rounded-md shadow-lg shrink-0 flex items-center justify-center hover:bg-gray-50 disabled:cursor-not-allowed"
+            style={{ background: 'white' }}
           >
-            {isSearching ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
+            {isSearching
+              ? <Loader2 className="w-4 h-4 animate-spin" style={{ color: '#111827' }} />
+              : <Search className="w-4 h-4" style={{ color: searchQuery.trim() ? '#111827' : '#9ca3af' }} />}
           </button>
           <button
             onClick={handleRecenter}
