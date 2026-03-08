@@ -8,15 +8,23 @@
 import { useCallback, useRef, useState } from "react";
 import type { StructuredDataItem, ToolUsed } from "@/lib/api";
 
-// Construct WebSocket URL based on current origin for production, or use localhost for dev
-const getWsUrl = () => {
+// Construct WebSocket URL dynamically
+const getWsUrl = (): string => {
+  // Server-side rendering — return a placeholder (won't be used)
   if (typeof window === "undefined") return "ws://localhost:8000/ws/live";
+  
+  // If explicitly set, use that
   if (process.env.NEXT_PUBLIC_WS_URL) return process.env.NEXT_PUBLIC_WS_URL;
+  
+  // Local development: connect directly to backend on port 8000
+  if (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") {
+    return "ws://localhost:8000/ws/live";
+  }
+  
+  // Production: same host, use appropriate protocol
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
   return `${protocol}//${window.location.host}/ws/live`;
 };
-
-const WS_URL = getWsUrl();
 
 export type LiveSessionStatus =
   | "disconnected"
@@ -66,7 +74,9 @@ export function useLiveSession(): UseLiveSessionReturn {
     setToolCalls([]);
     setStructuredData([]);
 
-    const ws = new WebSocket(WS_URL);
+    const wsUrl = getWsUrl();
+    console.log("[Live] Connecting to:", wsUrl);
+    const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
 
     ws.onopen = () => {

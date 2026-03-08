@@ -2,9 +2,10 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import Image from "next/image";
-import { checkHealth } from "@/lib/api";
+import { checkHealth, StructuredDataItem } from "@/lib/api";
 import ChatMessage from "@/components/ChatMessage";
 import ToolsUsed from "@/components/ToolsUsed";
+import StructuredDataRenderer from "@/components/StructuredDataRenderer";
 import AudioWaveform from "@/components/AudioWaveform";
 import { useAudioStream } from "@/hooks/useAudioStream";
 import { useLiveSession } from "@/hooks/useLiveSession";
@@ -13,6 +14,7 @@ interface Message {
   role: "user" | "assistant";
   content: string;
   toolsUsed?: { name: string; args: Record<string, unknown> }[];
+  structuredData?: StructuredDataItem[];
 }
 
 export default function Home() {
@@ -151,11 +153,49 @@ export default function Home() {
     });
   }, [live.toolCalls]);
 
+  // ─── Promote structured data into the last assistant message ───
+  const lastStructuredDataCountRef = useRef(0);
+  useEffect(() => {
+    if (live.structuredData.length <= lastStructuredDataCountRef.current) return;
+
+    const newData = live.structuredData.slice(lastStructuredDataCountRef.current);
+    lastStructuredDataCountRef.current = live.structuredData.length;
+
+    setMessages((prev) => {
+      const updated = [...prev];
+      let lastAssistantIdx = -1;
+      for (let i = updated.length - 1; i >= 0; i--) {
+        if (updated[i].role === "assistant") {
+          lastAssistantIdx = i;
+          break;
+        }
+      }
+      if (lastAssistantIdx >= 0) {
+        updated[lastAssistantIdx] = {
+          ...updated[lastAssistantIdx],
+          structuredData: [
+            ...(updated[lastAssistantIdx].structuredData || []),
+            ...newData,
+          ],
+        };
+      } else {
+        // No assistant message yet, create one with just structured data
+        updated.push({
+          role: "assistant",
+          content: "",
+          structuredData: newData,
+        });
+      }
+      return updated;
+    });
+  }, [live.structuredData]);
+
   // Reset counters when session disconnects
   useEffect(() => {
     if (live.status === "disconnected") {
       lastProcessedRef.current = 0;
       lastToolCountRef.current = 0;
+      lastStructuredDataCountRef.current = 0;
     }
   }, [live.status]);
 
@@ -274,15 +314,16 @@ export default function Home() {
           )}
 
           {messages.filter(m => m.role === "assistant").map((msg, idx) => (
-            <div key={idx}>
+            <div key={idx} className="mb-4">
               {msg.content && <ChatMessage role={msg.role} content={msg.content} />}
-              {msg.role === "assistant" &&
-                msg.toolsUsed &&
-                msg.toolsUsed.length > 0 && (
-                  <div className="mb-2 ml-0">
-                    <ToolsUsed tools={msg.toolsUsed} />
-                  </div>
-                )}
+              {msg.toolsUsed && msg.toolsUsed.length > 0 && (
+                <div className="mb-2 ml-0">
+                  <ToolsUsed tools={msg.toolsUsed} />
+                </div>
+              )}
+              {msg.structuredData && msg.structuredData.length > 0 && (
+                <StructuredDataRenderer data={msg.structuredData} />
+              )}
             </div>
           ))}
 
