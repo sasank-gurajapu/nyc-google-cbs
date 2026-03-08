@@ -396,7 +396,7 @@ async def _handle_tool_calls(session, tool_call, send_to_client):
         tool_name = fc.name
         tool_args = dict(fc.args) if fc.args else {}
 
-        logger.info(f"Tool call: {tool_name}({tool_args})")
+        logger.info(f"Tool call: {tool_name}({tool_args}) id={fc.id}")
 
         # Notify the frontend about the tool call
         await send_to_client({
