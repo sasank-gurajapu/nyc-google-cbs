@@ -138,9 +138,45 @@ async def run_live_session(
     """
     client = genai.Client(api_key=SETTINGS["GEMINI_API_KEY"])
 
+    # Wait for location message before starting the session (with timeout)
+    user_location = None
+    try:
+        # Give the client 3 seconds to send location
+        for _ in range(30):  # 30 * 0.1s = 3s timeout
+            if stop_event.is_set():
+                return
+            try:
+                msg = await asyncio.wait_for(audio_queue.get(), timeout=0.1)
+                if msg.get("type") == "location":
+                    user_location = {
+                        "latitude": msg.get("latitude", 0),
+                        "longitude": msg.get("longitude", 0),
+                    }
+                    logger.info(f"Received user location: {user_location}")
+                    break
+                else:
+                    # Put non-location messages back (shouldn't happen, but just in case)
+                    await audio_queue.put(msg)
+            except asyncio.TimeoutError:
+                continue
+    except Exception as e:
+        logger.warning(f"Error waiting for location: {e}")
+
+    # Build system instruction with user location
+    if user_location:
+        location_context = (
+            f"\n\nUSER LOCATION: The user is currently at latitude {user_location['latitude']}, "
+            f"longitude {user_location['longitude']}. Use these coordinates when calling "
+            f"location-based tools like nearby_search or text_search to provide relevant local results."
+        )
+        system_instruction = SYSTEM_INSTRUCTION + location_context
+    else:
+        system_instruction = SYSTEM_INSTRUCTION
+        logger.warning("No location received, using default system instruction")
+
     config = types.LiveConnectConfig(
         response_modalities=["AUDIO"],
-        system_instruction=SYSTEM_INSTRUCTION,
+        system_instruction=system_instruction,
         tools=TOOLS,
         speech_config=types.SpeechConfig(
             voice_config=types.VoiceConfig(
@@ -224,30 +260,9 @@ async def _audio_sender(
             await session.send_realtime_input(
                 audio=types.Blob(data=audio_bytes, mime_type="audio/pcm;rate=16000")
             )
-        elif msg.get("type") == "text":
-            # User typed a text message — send as text input
-            await session.send_client_content(
-                turns=types.Content(
-                    role="user",
-                    parts=[types.Part.from_text(text=msg["text"])],
-                )
-            )
         elif msg.get("type") == "location":
-            # User's current location — send as context to Gemini
-            lat = msg.get("latitude", 0)
-            lng = msg.get("longitude", 0)
-            location_msg = (
-                f"[SYSTEM: The user's current location is latitude {lat}, longitude {lng}. "
-                f"Use these coordinates when calling location-based tools like nearby_search or text_search. "
-                f"Do not mention these coordinates directly to the user unless asked.]"
-            )
-            logger.info(f"User location received: {lat}, {lng}")
-            await session.send_client_content(
-                turns=types.Content(
-                    role="user",
-                    parts=[types.Part.from_text(text=location_msg)],
-                )
-            )
+            # Location is handled before session starts, ignore if received later
+            logger.debug("Ignoring late location message")
         elif msg.get("type") == "end_turn":
             # User finished speaking (silence detected on client)
             pass  # VAD in Gemini Live handles turn detection automatically
