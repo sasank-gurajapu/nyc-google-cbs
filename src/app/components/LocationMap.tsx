@@ -202,6 +202,8 @@ export function LocationMap({
   useEffect(() => {
     if (externalPosition) {
       setPosition(externalPosition);
+      setInfoPlace(null);
+      setSelectedPlaceId(null);
     }
   }, [externalPosition?.lat, externalPosition?.lng]);
 
