@@ -300,6 +300,22 @@ export default function App() {
       /^(take me to|go to|navigate to|switch to|explore|show me|find|search for|what'?s? (?:in|near|at)|tell me about|what about|let'?s? (?:go to|visit))\s+/i;
     const isLocationChange = locationPrefixRe.test(lowerContent);
 
+    // Detect "X nearby / near me / near here" — generic place search
+    const nearbyRe = /\b(near\s*(by|me|here)?|close\s*by|around\s*here|in\s*(the\s*)?area)\b/i;
+    if (currentLocation && nearbyRe.test(lowerContent)) {
+      // Extract the search query: strip location prefix + nearby modifier
+      const searchQuery = content
+        .replace(locationPrefixRe, '')
+        .replace(nearbyRe, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+      if (searchQuery.length > 1) {
+        await handlePlacesSearch(searchQuery, content);
+        setIsProcessing(false);
+        return;
+      }
+    }
+
     if (isLocationChange) {
       const locationText = content.replace(locationPrefixRe, '').trim();
 
@@ -494,6 +510,68 @@ export default function App() {
         `I'd love to tell you about ${place.name}, but I had trouble fetching the details. Try asking me directly!`,
         { suggestedQuestions: [`Tell me about ${place.name}`] }
       );
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  // ── Generic place search — "show me pizza places nearby" ──────────────────
+  const handlePlacesSearch = async (query: string, rawInput: string) => {
+    if (!currentLocation) return;
+
+    const userMsg: ChatMessage = {
+      id: `user-search-${Date.now()}`,
+      role: 'user',
+      content: rawInput,
+      timestamp: new Date(),
+    };
+    setMessages((prev) => [...prev, userMsg]);
+    setIsProcessing(true);
+
+    try {
+      const resp = await fetch(`${API_BASE}/search-places`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${publicAnonKey}` },
+        body: JSON.stringify({ query, lat: currentLocation.lat, lng: currentLocation.lng }),
+      });
+
+      if (!resp.ok) throw new Error('Search failed');
+      const data = await resp.json();
+      const results: PlaceOfInterest[] = data.places || [];
+
+      if (results.length === 0) {
+        addAssistantMessage(`I couldn't find any "${query}" nearby. Try a different search!`);
+        setIsProcessing(false);
+        return;
+      }
+
+      // Update map pins with search results
+      setPlaces(results);
+
+      // Lock pin to first result
+      const top = results[0];
+      setCurrentLocation({ lat: top.lat, lng: top.lng, address: top.address || top.name });
+      setSelectedPlace(top);
+      setLocationState('ready');
+
+      // Build response message
+      const names = results.slice(0, 5).map((p, i) => {
+        const rating = p.rating ? ` ⭐ ${p.rating}` : '';
+        return `${i + 1}. **${p.name}**${rating} — ${p.address}`;
+      }).join('\n');
+
+      addAssistantMessage(
+        `Found ${results.length} result${results.length > 1 ? 's' : ''} for "${query}" near you. Showing the closest on the map:\n\n${names}`,
+        {
+          suggestedQuestions: [
+            `Tell me more about ${top.name}`,
+            `What are the best ${query} in this area?`,
+            `Show me more options`,
+          ],
+        }
+      );
+    } catch {
+      addAssistantMessage(`I had trouble searching for "${query}". Try asking me in a different way!`);
     } finally {
       setIsProcessing(false);
     }

@@ -196,6 +196,74 @@ app.post("/make-server-3c4885b3/nearby-places", async (c) => {
   }
 });
 
+// Text-based place search — "pizza near me", "coffee shops", etc.
+app.post("/make-server-3c4885b3/search-places", async (c) => {
+  try {
+    const { query, lat, lng } = await c.req.json();
+    if (!query) return c.json({ error: "query required" }, 400);
+    if (lat == null || lng == null) return c.json({ error: "lat/lng required" }, 400);
+
+    const mapsKey = Deno.env.get("GOOGLE_MAPS_API_KEY");
+    if (!mapsKey) return c.json({ error: "Maps API key not configured" }, 500);
+
+    const url = "https://places.googleapis.com/v1/places:searchText";
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Goog-Api-Key": mapsKey,
+        "X-Goog-FieldMask":
+          "places.id,places.displayName,places.formattedAddress,places.location,places.types,places.photos,places.rating,places.editorialSummary,places.primaryType",
+      },
+      body: JSON.stringify({
+        textQuery: query,
+        maxResultCount: 10,
+        locationBias: {
+          circle: {
+            center: { latitude: lat, longitude: lng },
+            radius: 8046, // ~5 miles
+          },
+        },
+      }),
+    });
+
+    if (!resp.ok) {
+      const errText = await resp.text();
+      console.error("Places Text Search error:", resp.status, errText);
+      return c.json({ error: "Failed to search places" }, 500);
+    }
+
+    const data = await resp.json();
+    const places = (data.places || []).map((p: any) => {
+      let photoUrl = "";
+      let photoName = "";
+      if (p.photos && p.photos.length > 0) {
+        photoName = p.photos[0].name;
+        photoUrl = `https://places.googleapis.com/v1/${photoName}/media?maxWidthPx=200&maxHeightPx=200&key=${mapsKey}`;
+      }
+      return {
+        id: p.id,
+        name: p.displayName?.text || "Unknown",
+        address: p.formattedAddress || "",
+        lat: p.location?.latitude,
+        lng: p.location?.longitude,
+        types: p.types || [],
+        primaryType: p.primaryType || "",
+        rating: p.rating || null,
+        photoUrl,
+        photoName,
+        summary: p.editorialSummary?.text || "",
+      };
+    });
+
+    console.log(`Text search for "${query}" found ${places.length} places`);
+    return c.json({ places, query });
+  } catch (error) {
+    console.error("Search places error:", error);
+    return c.json({ error: "Failed to search places" }, 500);
+  }
+});
+
 // Get AI-generated facts about a specific place
 app.post("/make-server-3c4885b3/place-info", async (c) => {
   try {

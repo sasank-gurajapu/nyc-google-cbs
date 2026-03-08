@@ -196,6 +196,74 @@ app.post("/make-server-3c4885b3/nearby-places", async (c) => {
   }
 });
 
+// Text-based place search — "pizza near me", "coffee shops", etc.
+app.post("/make-server-3c4885b3/search-places", async (c) => {
+  try {
+    const { query, lat, lng } = await c.req.json();
+    if (!query) return c.json({ error: "query required" }, 400);
+    if (lat == null || lng == null) return c.json({ error: "lat/lng required" }, 400);
+
+    const mapsKey = Deno.env.get("GOOGLE_MAPS_API_KEY");
+    if (!mapsKey) return c.json({ error: "Maps API key not configured" }, 500);
+
+    const url = "https://places.googleapis.com/v1/places:searchText";
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Goog-Api-Key": mapsKey,
+        "X-Goog-FieldMask":
+          "places.id,places.displayName,places.formattedAddress,places.location,places.types,places.photos,places.rating,places.editorialSummary,places.primaryType",
+      },
+      body: JSON.stringify({
+        textQuery: query,
+        maxResultCount: 10,
+        locationBias: {
+          circle: {
+            center: { latitude: lat, longitude: lng },
+            radius: 8046, // ~5 miles
+          },
+        },
+      }),
+    });
+
+    if (!resp.ok) {
+      const errText = await resp.text();
+      console.error("Places Text Search error:", resp.status, errText);
+      return c.json({ error: "Failed to search places" }, 500);
+    }
+
+    const data = await resp.json();
+    const places = (data.places || []).map((p: any) => {
+      let photoUrl = "";
+      let photoName = "";
+      if (p.photos && p.photos.length > 0) {
+        photoName = p.photos[0].name;
+        photoUrl = `https://places.googleapis.com/v1/${photoName}/media?maxWidthPx=200&maxHeightPx=200&key=${mapsKey}`;
+      }
+      return {
+        id: p.id,
+        name: p.displayName?.text || "Unknown",
+        address: p.formattedAddress || "",
+        lat: p.location?.latitude,
+        lng: p.location?.longitude,
+        types: p.types || [],
+        primaryType: p.primaryType || "",
+        rating: p.rating || null,
+        photoUrl,
+        photoName,
+        summary: p.editorialSummary?.text || "",
+      };
+    });
+
+    console.log(`Text search for "${query}" found ${places.length} places`);
+    return c.json({ places, query });
+  } catch (error) {
+    console.error("Search places error:", error);
+    return c.json({ error: "Failed to search places" }, 500);
+  }
+});
+
 // Get AI-generated facts about a specific place
 app.post("/make-server-3c4885b3/place-info", async (c) => {
   try {
@@ -660,31 +728,32 @@ async function fetchWikipediaThumbnail(query: string): Promise<{ url: string; ti
   }
 }
 
-// Helper: search Wikipedia article images for the oldest historical photo
-async function findHistoricalPhotoInWikipedia(articleTitle: string): Promise<{ url: string; date: string } | null> {
+interface HistoricalPhoto {
+  url: string;
+  date: string;
+  description?: string;
+  source: string;
+}
+
+// Helper: collect ALL historical photos from a Wikipedia article (years 1850–1969)
+async function findHistoricalPhotosInWikipedia(articleTitle: string): Promise<HistoricalPhoto[]> {
+  const results: HistoricalPhoto[] = [];
   try {
-    // Get list of all images used in the article
-    const listUrl = `https://en.wikipedia.org/w/api.php?action=query&titles=${encodeURIComponent(articleTitle)}&prop=images&imlimit=30&format=json`;
+    const listUrl = `https://en.wikipedia.org/w/api.php?action=query&titles=${encodeURIComponent(articleTitle)}&prop=images&imlimit=50&format=json`;
     const lr = await fetch(listUrl);
-    if (!lr.ok) return null;
+    if (!lr.ok) return results;
     const ld = await lr.json();
     const pages = ld.query?.pages;
-    if (!pages) return null;
+    if (!pages) return results;
     const page = Object.values(pages)[0] as any;
     const imageFiles: string[] = (page?.images || [])
       .map((i: any) => i.title as string)
-      .filter((t: string) => t.match(/\.(jpg|jpeg|png)$/i) && !t.match(/icon|logo|flag|map|svg|seal|coat|arms/i));
+      .filter((t: string) => t.match(/\.(jpg|jpeg|png)$/i) && !t.match(/icon|logo|flag|map|svg|seal|coat|arms|button|arrow/i));
 
-    if (imageFiles.length === 0) return null;
+    if (imageFiles.length === 0) return results;
 
-    // Fetch imageinfo for candidates to find old dates
     const chunks: string[][] = [];
-    for (let i = 0; i < Math.min(imageFiles.length, 20); i += 10) {
-      chunks.push(imageFiles.slice(i, i + 10));
-    }
-
-    let bestYear = Infinity;
-    let bestResult: { url: string; date: string; description?: string } | null = null;
+    for (let i = 0; i < Math.min(imageFiles.length, 30); i += 10) chunks.push(imageFiles.slice(i, i + 10));
 
     for (const chunk of chunks) {
       try {
@@ -694,34 +763,74 @@ async function findHistoricalPhotoInWikipedia(articleTitle: string): Promise<{ u
         const id = await ir.json();
         const infoPages = id.query?.pages;
         if (!infoPages) continue;
-
         for (const p of Object.values(infoPages) as any[]) {
           const info = p.imageinfo?.[0];
           if (!info?.url) continue;
           const raw = info.extmetadata?.DateTimeOriginal?.value || info.extmetadata?.DateTime?.value || "";
-          // Look for years 1850–1969 (genuinely historical)
           const m = raw.match(/\b(1[89]\d{2}|19[0-5]\d)\b/);
           if (m) {
-            const yr = parseInt(m[1]);
-            if (yr < bestYear) {
-              bestYear = yr;
-              const rawDesc = info.extmetadata?.ImageDescription?.value || info.extmetadata?.ObjectName?.value || "";
-              bestResult = {
-                url: info.url,
-                date: m[1],
-                description: rawDesc.replace(/<[^>]*>/g, "").trim().substring(0, 150) || undefined,
-              };
-            }
+            const rawDesc = info.extmetadata?.ImageDescription?.value || info.extmetadata?.ObjectName?.value || "";
+            results.push({
+              url: info.url,
+              date: m[1],
+              description: rawDesc.replace(/<[^>]*>/g, "").trim().substring(0, 150) || undefined,
+              source: "Wikipedia",
+            });
           }
         }
-      } catch { /* skip chunk */ }
+      } catch { /* skip */ }
     }
-
-    return bestResult;
-  } catch {
-    return null;
-  }
+    // Sort oldest first
+    results.sort((a, b) => parseInt(a.date) - parseInt(b.date));
+  } catch { /* ignore */ }
+  return results;
 }
+
+// Helper: search Wikimedia Commons for historical photos of a place
+async function searchWikimediaCommons(placeName: string): Promise<HistoricalPhoto[]> {
+  const results: HistoricalPhoto[] = [];
+  try {
+    const queries = [
+      `${placeName} historical photograph`,
+      `${placeName} old photograph`,
+    ];
+    const seen = new Set<string>();
+    for (const q of queries) {
+      const url = `https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrsearch=${encodeURIComponent(q)}&gsrnamespace=6&gsrlimit=8&prop=imageinfo&iiprop=url|extmetadata&format=json`;
+      const r = await fetch(url);
+      if (!r.ok) continue;
+      const d = await r.json();
+      const pages = d.query?.pages;
+      if (!pages) continue;
+      for (const p of Object.values(pages) as any[]) {
+        const info = p.imageinfo?.[0];
+        if (!info?.url || seen.has(info.url)) continue;
+        if (!info.url.match(/\.(jpg|jpeg|png)$/i)) continue;
+        const raw = info.extmetadata?.DateTimeOriginal?.value || info.extmetadata?.DateTime?.value || "";
+        const m = raw.match(/\b(1[89]\d{2}|19[0-5]\d)\b/);
+        if (m) {
+          seen.add(info.url);
+          const rawDesc = info.extmetadata?.ImageDescription?.value || info.extmetadata?.ObjectName?.value || "";
+          results.push({
+            url: info.url,
+            date: m[1],
+            description: rawDesc.replace(/<[^>]*>/g, "").trim().substring(0, 150) || undefined,
+            source: "Wikimedia Commons",
+          });
+        }
+      }
+    }
+    results.sort((a, b) => parseInt(a.date) - parseInt(b.date));
+  } catch { /* ignore */ }
+  return results;
+}
+
+// Keep for backward compat (returns the oldest single photo)
+async function findHistoricalPhotoInWikipedia(articleTitle: string): Promise<{ url: string; date: string; description?: string } | null> {
+  const all = await findHistoricalPhotosInWikipedia(articleTitle);
+  return all.length > 0 ? all[0] : null;
+}
+
 
 // Historical endpoint — searches for real historical photos first, then generates with Gemini
 app.post("/make-server-3c4885b3/historical-streetview", async (c) => {
@@ -754,42 +863,33 @@ app.post("/make-server-3c4885b3/historical-streetview", async (c) => {
       }
     }
 
-    // ── Step 1: Wikipedia thumbnail (fallback current photo if no Places photo) ──
+    // ── Steps 1 & 2: Wikipedia thumbnail + all historical photos ────────────────
     let wikiThumb: { url: string; title: string } | null = null;
     let wikiImageBase64: string | null = null;
     let wikiImageMime = "image/jpeg";
+    let allHistoricalPhotos: HistoricalPhoto[] = [];
 
-    // Only search Wikipedia if we don't already have a Places photo
-    if (!placesPhotoBase64) {
-      console.log(`Searching Wikipedia for: "${placeName}"`);
-      wikiThumb = await fetchWikipediaThumbnail(placeName);
-      if (wikiThumb) {
-        console.log(`Wikipedia thumbnail found: ${wikiThumb.url}`);
+    console.log(`Searching Wikipedia for: "${placeName}"`);
+    wikiThumb = await fetchWikipediaThumbnail(placeName);
+    if (wikiThumb) {
+      console.log(`Wikipedia thumbnail found: ${wikiThumb.url}`);
+      if (!placesPhotoBase64) {
         const img = await fetchImageAsBase64(wikiThumb.url);
         if (img) { wikiImageBase64 = img.base64; wikiImageMime = img.mimeType; }
       }
-    }
-
-    // ── Step 2: Search for real historical photos in the Wikipedia article ────────
-    const wikiArticleTitle = wikiThumb?.title || null;
-    if (wikiArticleTitle) {
-      console.log(`Searching Wikipedia article images for historical photos: "${wikiArticleTitle}"`);
-      const hist = await findHistoricalPhotoInWikipedia(wikiArticleTitle);
-      if (hist) {
-        console.log(`Found real historical photo from ${hist.date}: ${hist.url}`);
-        const img = await fetchImageAsBase64(hist.url);
-        if (img) {
-          return c.json({
-            historicalImage: `data:${img.mimeType};base64,${img.base64}`,
-            currentStreetView: wikiThumb!.url,
-            photoDate: hist.date,
-            photoDescription: hist.description || null,
-            articleTitle: wikiArticleTitle,
-            source: "wikipedia",
-            location: locationName,
-          });
-        }
+      // Collect all historical photos from the article + Wikimedia Commons in parallel
+      const [wikiPhotos, commonsPhotos] = await Promise.all([
+        findHistoricalPhotosInWikipedia(wikiThumb.title),
+        searchWikimediaCommons(placeName),
+      ]);
+      // Merge, deduplicate by URL, sort oldest first, cap at 4 (leave slot for Gemini)
+      const seen = new Set<string>();
+      for (const p of [...wikiPhotos, ...commonsPhotos]) {
+        if (!seen.has(p.url)) { seen.add(p.url); allHistoricalPhotos.push(p); }
       }
+      allHistoricalPhotos.sort((a, b) => parseInt(a.date) - parseInt(b.date));
+      allHistoricalPhotos = allHistoricalPhotos.slice(0, 4);
+      console.log(`Found ${allHistoricalPhotos.length} historical photos total`);
     }
 
     // ── Step 3: Fallback current photo — Google Street View (only if no Places or Wiki photo) ──
@@ -822,86 +922,106 @@ app.post("/make-server-3c4885b3/historical-streetview", async (c) => {
       ? `You are looking at a current photo of ${placeName} (${locationName}). Generate a photorealistic image showing this exact monument/building/place as it would have appeared approximately 100 years ago (1920s era). Keep the same viewing angle and composition. Transform: remove modern additions, restore period-accurate architecture, add people in 1920s attire nearby, period lighting and surroundings. Give it the warm sepia-toned quality of an authentic colorized historical photograph. Focus on the ${placeName} itself, not the surrounding street.`
       : `Create a detailed, photorealistic historical image of ${placeName} (${locationName}) as it appeared approximately 100 years ago (1920s era). Show the building/monument itself with period-accurate surroundings, people in 1920s attire, and the warm sepia-toned atmospheric quality of an authentic colorized historical photograph.`;
 
-    // ── Step 4: Gemini image generation with monument photo as input ──────────────
-    const geminiImageModels = [
-      "gemini-2.0-flash-exp-image-generation",
-      "gemini-2.0-flash-preview-image-generation",
-      "gemini-2.0-flash-exp",
-    ];
-
-    for (const model of geminiImageModels) {
-      try {
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiApiKey}`;
-        console.log(`Trying image generation model: ${model}`);
-
-        const parts: any[] = [];
-        if (currentPhotoBase64) {
-          parts.push({ inlineData: { mimeType: currentPhotoMime, data: currentPhotoBase64 } });
-          parts.push({ text: monumentPrompt });
-        } else {
-          parts.push({ text: `Generate an image: ${monumentPrompt}` });
-        }
-
-        const response = await fetch(url, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            contents: [{ parts }],
-            generationConfig: { responseModalities: ["TEXT", "IMAGE"] },
-          }),
-        });
-
-        if (response.ok) {
-          const data = await response.json();
-          if (data.candidates?.[0]?.content?.parts) {
-            for (const part of data.candidates[0].content.parts) {
+    // ── Helper: try Gemini image models, return data-URI or null ─────────────────
+    const tryGeminiImage = async (): Promise<string | null> => {
+      const models = [
+        "gemini-2.0-flash-exp-image-generation",
+        "gemini-2.0-flash-preview-image-generation",
+        "gemini-2.0-flash-exp",
+      ];
+      for (const model of models) {
+        try {
+          const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiApiKey}`;
+          console.log(`Trying image generation model: ${model}`);
+          const parts: any[] = [];
+          if (currentPhotoBase64) {
+            parts.push({ inlineData: { mimeType: currentPhotoMime, data: currentPhotoBase64 } });
+            parts.push({ text: monumentPrompt });
+          } else {
+            parts.push({ text: `Generate an image: ${monumentPrompt}` });
+          }
+          const response = await fetch(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              contents: [{ parts }],
+              generationConfig: { responseModalities: ["TEXT", "IMAGE"] },
+            }),
+          });
+          if (response.ok) {
+            const data = await response.json();
+            for (const part of data.candidates?.[0]?.content?.parts ?? []) {
               if (part.inlineData) {
                 console.log(`Image generated with ${model}`);
-                return c.json({
-                  historicalImage: `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`,
-                  currentStreetView: currentPhotoUrl,
-                  source: "gemini",
-                  model,
-                  location: locationName,
-                });
+                return `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
               }
             }
+          } else {
+            console.log(`${model} failed:`, (await response.text()).substring(0, 200));
           }
-        } else {
-          const errText = await response.text();
-          console.log(`${model} failed:`, errText.substring(0, 200));
-        }
-      } catch (err) { console.log(`${model} error:`, err); }
-    }
+        } catch (err) { console.log(`${model} error:`, err); }
+      }
+      return null;
+    };
 
-    // ── Step 5: Imagen models ─────────────────────────────────────────────────────
-    for (const model of ["imagen-3.0-generate-002", "imagen-3.0-generate-001"]) {
-      try {
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:predict?key=${geminiApiKey}`;
-        const response = await fetch(url, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            instances: [{ prompt: monumentPrompt }],
-            parameters: { sampleCount: 1, aspectRatio: "4:3", safetyFilterLevel: "BLOCK_MEDIUM_AND_ABOVE" },
-          }),
+    // If we have real historical photos, download them AND run Gemini in parallel (to fill up to 5)
+    if (allHistoricalPhotos.length > 0) {
+      const [fetched, geminiDataUri] = await Promise.all([
+        Promise.all(
+          allHistoricalPhotos.map(async (p) => {
+            const img = await fetchImageAsBase64(p.url);
+            if (!img) return null;
+            return {
+              image: `data:${img.mimeType};base64,${img.base64}`,
+              date: p.date,
+              description: p.description || null,
+              source: p.source,
+            };
+          })
+        ),
+        tryGeminiImage(), // run in parallel — adds AI rendering as final slide
+      ]);
+
+      const valid: Array<{ image: string; date: string; description: string | null; source: string }> =
+        fetched.filter(Boolean) as any;
+
+      // Append Gemini rendering if there's room
+      if (geminiDataUri && valid.length < 5) {
+        valid.push({
+          image: geminiDataUri,
+          date: "~1920s",
+          description: "AI-generated historical rendering by Gemini",
+          source: "gemini",
         });
-        if (response.ok) {
-          const data = await response.json();
-          if (data.predictions?.[0]?.bytesBase64Encoded) {
-            return c.json({
-              historicalImage: `data:image/png;base64,${data.predictions[0].bytesBase64Encoded}`,
-              currentStreetView: currentPhotoUrl,
-              source: "imagen",
-              model,
-              location: locationName,
-            });
-          }
-        }
-      } catch (err) { console.log(`Imagen error:`, err); }
+      }
+
+      if (valid.length > 0) {
+        return c.json({
+          historicalImage: valid[0]!.image,
+          historicalImages: valid,
+          currentStreetView: currentPhotoUrl,
+          photoDate: valid[0]!.date,
+          photoDescription: valid[0]!.description,
+          articleTitle: wikiThumb?.title || null,
+          source: "wikipedia",
+          location: locationName,
+        });
+      }
     }
 
-    // ── Step 6: Text description fallback (always succeeds) ───────────────────────
+    // ── Step 4: No real photos — try Gemini image generation alone ───────────────
+    const geminiDataUri = await tryGeminiImage();
+    if (geminiDataUri) {
+      return c.json({
+        historicalImage: geminiDataUri,
+        historicalImages: [{ image: geminiDataUri, date: "~1920s", description: "AI-generated historical rendering by Gemini", source: "gemini" }],
+        currentStreetView: currentPhotoUrl,
+        source: "gemini",
+        location: locationName,
+      });
+    }
+
+    // ── Step 5: Text description fallback (always succeeds) ──────────────────────
     console.log("All image models failed, falling back to text description");
     try {
       const textPrompt = `You are a historian and visual storyteller. Describe in vivid detail what ${placeName} (${locationName}) would have looked like approximately 100 years ago (around the 1920s).
