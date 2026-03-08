@@ -88,7 +88,7 @@ export default function App() {
       // Now auto-query
       setTimeout(() => {
         sendMessage(
-          `I'm at ${currentLocation.address}. Tell me about this area! Share fun facts, history, upcoming events, and real estate within 2 miles.`,
+          `I'm at ${currentLocation.address}. Start my tour here! Give me a captivating introduction — what makes this spot special, what I should notice right now, and the most surprising thing that happened here.`,
           true // isAutoQuery - don't show as user bubble
         );
       }, 300);
@@ -416,7 +416,7 @@ export default function App() {
     const userMsg: ChatMessage = {
       id: `user-poi-${Date.now()}`,
       role: 'user',
-      content: `Tell me about ${place.name}`,
+      content: `I'm standing in front of ${place.name}. Give me the tour — what's the story here, what should I notice, and what surprises most people about this place?`,
       timestamp: new Date(),
     };
     setMessages((prev) => [...prev, userMsg]);

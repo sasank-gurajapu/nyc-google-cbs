@@ -68,7 +68,7 @@ export function VoiceAssistant({ onTranscript, lastResponse, isProcessing }: Voi
 
     setTimeout(() => {
       const utterance = new SpeechSynthesisUtterance(
-        text.length > 500 ? text.substring(0, 500) + '…' : text
+        text.length > 800 ? text.substring(0, 800) + '…' : text
       );
       utterance.rate = 1.05;
       utterance.pitch = 1;
