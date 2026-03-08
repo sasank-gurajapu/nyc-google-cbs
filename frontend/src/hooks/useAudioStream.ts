@@ -16,25 +16,37 @@ const WORKLET_CODE = `
 class PcmRecorderProcessor extends AudioWorkletProcessor {
   constructor() {
     super();
-    this.buffer = [];
+    this.buffer = new Float32Array(2048);
+    this.bufferPointer = 0;
   }
   process(inputs) {
     const input = inputs[0];
     if (input.length > 0) {
       const samples = input[0]; // Float32 mono
-      // Compute RMS amplitude
-      let sumSq = 0;
+      
+      // Append to buffer
       for (let i = 0; i < samples.length; i++) {
-        sumSq += samples[i] * samples[i];
+        this.buffer[this.bufferPointer++] = samples[i];
+        
+        if (this.bufferPointer >= this.buffer.length) {
+          // Compute RMS amplitude
+          let sumSq = 0;
+          for (let j = 0; j < this.buffer.length; j++) {
+            sumSq += this.buffer[j] * this.buffer[j];
+          }
+          const rms = Math.sqrt(sumSq / this.buffer.length);
+          
+          // Convert Float32 → Int16
+          const pcm16 = new Int16Array(this.buffer.length);
+          for (let j = 0; j < this.buffer.length; j++) {
+            const s = Math.max(-1, Math.min(1, this.buffer[j]));
+            pcm16[j] = s < 0 ? s * 0x8000 : s * 0x7fff;
+          }
+          
+          this.port.postMessage({ pcm: pcm16.buffer, rms }, [pcm16.buffer]);
+          this.bufferPointer = 0;
+        }
       }
-      const rms = Math.sqrt(sumSq / samples.length);
-      // Convert Float32 → Int16
-      const pcm16 = new Int16Array(samples.length);
-      for (let i = 0; i < samples.length; i++) {
-        const s = Math.max(-1, Math.min(1, samples[i]));
-        pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
-      }
-      this.port.postMessage({ pcm: pcm16.buffer, rms }, [pcm16.buffer]);
     }
     return true;
   }
