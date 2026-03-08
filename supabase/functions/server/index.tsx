@@ -814,43 +814,14 @@ app.post("/make-server-3c4885b3/historical-streetview", async (c) => {
         findHistoricalPhotosInWikipedia(wikiThumb.title),
         searchWikimediaCommons(placeName),
       ]);
-      // Merge, deduplicate by URL, sort oldest first, cap at 8
+      // Merge, deduplicate by URL, sort oldest first, cap at 4 (leave slot for Gemini)
       const seen = new Set<string>();
       for (const p of [...wikiPhotos, ...commonsPhotos]) {
         if (!seen.has(p.url)) { seen.add(p.url); allHistoricalPhotos.push(p); }
       }
       allHistoricalPhotos.sort((a, b) => parseInt(a.date) - parseInt(b.date));
-      allHistoricalPhotos = allHistoricalPhotos.slice(0, 8);
+      allHistoricalPhotos = allHistoricalPhotos.slice(0, 4);
       console.log(`Found ${allHistoricalPhotos.length} historical photos total`);
-    }
-
-    // If we have real historical photos, fetch them as base64 and return all
-    if (allHistoricalPhotos.length > 0) {
-      const fetched = await Promise.all(
-        allHistoricalPhotos.map(async (p) => {
-          const img = await fetchImageAsBase64(p.url);
-          if (!img) return null;
-          return {
-            image: `data:${img.mimeType};base64,${img.base64}`,
-            date: p.date,
-            description: p.description || null,
-            source: p.source,
-          };
-        })
-      );
-      const valid = fetched.filter(Boolean);
-      if (valid.length > 0) {
-        return c.json({
-          historicalImage: valid[0]!.image,        // primary (oldest) for backward compat
-          historicalImages: valid,                  // full gallery
-          currentStreetView: placesPhotoUrl || wikiThumb?.url || null,
-          photoDate: valid[0]!.date,
-          photoDescription: valid[0]!.description,
-          articleTitle: wikiThumb?.title || null,
-          source: "wikipedia",
-          location: locationName,
-        });
-      }
     }
 
     // ── Step 3: Fallback current photo — Google Street View (only if no Places or Wiki photo) ──
@@ -883,86 +854,106 @@ app.post("/make-server-3c4885b3/historical-streetview", async (c) => {
       ? `You are looking at a current photo of ${placeName} (${locationName}). Generate a photorealistic image showing this exact monument/building/place as it would have appeared approximately 100 years ago (1920s era). Keep the same viewing angle and composition. Transform: remove modern additions, restore period-accurate architecture, add people in 1920s attire nearby, period lighting and surroundings. Give it the warm sepia-toned quality of an authentic colorized historical photograph. Focus on the ${placeName} itself, not the surrounding street.`
       : `Create a detailed, photorealistic historical image of ${placeName} (${locationName}) as it appeared approximately 100 years ago (1920s era). Show the building/monument itself with period-accurate surroundings, people in 1920s attire, and the warm sepia-toned atmospheric quality of an authentic colorized historical photograph.`;
 
-    // ── Step 4: Gemini image generation with monument photo as input ──────────────
-    const geminiImageModels = [
-      "gemini-2.0-flash-exp-image-generation",
-      "gemini-2.0-flash-preview-image-generation",
-      "gemini-2.0-flash-exp",
-    ];
-
-    for (const model of geminiImageModels) {
-      try {
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiApiKey}`;
-        console.log(`Trying image generation model: ${model}`);
-
-        const parts: any[] = [];
-        if (currentPhotoBase64) {
-          parts.push({ inlineData: { mimeType: currentPhotoMime, data: currentPhotoBase64 } });
-          parts.push({ text: monumentPrompt });
-        } else {
-          parts.push({ text: `Generate an image: ${monumentPrompt}` });
-        }
-
-        const response = await fetch(url, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            contents: [{ parts }],
-            generationConfig: { responseModalities: ["TEXT", "IMAGE"] },
-          }),
-        });
-
-        if (response.ok) {
-          const data = await response.json();
-          if (data.candidates?.[0]?.content?.parts) {
-            for (const part of data.candidates[0].content.parts) {
+    // ── Helper: try Gemini image models, return data-URI or null ─────────────────
+    const tryGeminiImage = async (): Promise<string | null> => {
+      const models = [
+        "gemini-2.0-flash-exp-image-generation",
+        "gemini-2.0-flash-preview-image-generation",
+        "gemini-2.0-flash-exp",
+      ];
+      for (const model of models) {
+        try {
+          const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiApiKey}`;
+          console.log(`Trying image generation model: ${model}`);
+          const parts: any[] = [];
+          if (currentPhotoBase64) {
+            parts.push({ inlineData: { mimeType: currentPhotoMime, data: currentPhotoBase64 } });
+            parts.push({ text: monumentPrompt });
+          } else {
+            parts.push({ text: `Generate an image: ${monumentPrompt}` });
+          }
+          const response = await fetch(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              contents: [{ parts }],
+              generationConfig: { responseModalities: ["TEXT", "IMAGE"] },
+            }),
+          });
+          if (response.ok) {
+            const data = await response.json();
+            for (const part of data.candidates?.[0]?.content?.parts ?? []) {
               if (part.inlineData) {
                 console.log(`Image generated with ${model}`);
-                return c.json({
-                  historicalImage: `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`,
-                  currentStreetView: currentPhotoUrl,
-                  source: "gemini",
-                  model,
-                  location: locationName,
-                });
+                return `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
               }
             }
+          } else {
+            console.log(`${model} failed:`, (await response.text()).substring(0, 200));
           }
-        } else {
-          const errText = await response.text();
-          console.log(`${model} failed:`, errText.substring(0, 200));
-        }
-      } catch (err) { console.log(`${model} error:`, err); }
-    }
+        } catch (err) { console.log(`${model} error:`, err); }
+      }
+      return null;
+    };
 
-    // ── Step 5: Imagen models ─────────────────────────────────────────────────────
-    for (const model of ["imagen-3.0-generate-002", "imagen-3.0-generate-001"]) {
-      try {
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:predict?key=${geminiApiKey}`;
-        const response = await fetch(url, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            instances: [{ prompt: monumentPrompt }],
-            parameters: { sampleCount: 1, aspectRatio: "4:3", safetyFilterLevel: "BLOCK_MEDIUM_AND_ABOVE" },
-          }),
+    // If we have real historical photos, download them AND run Gemini in parallel (to fill up to 5)
+    if (allHistoricalPhotos.length > 0) {
+      const [fetched, geminiDataUri] = await Promise.all([
+        Promise.all(
+          allHistoricalPhotos.map(async (p) => {
+            const img = await fetchImageAsBase64(p.url);
+            if (!img) return null;
+            return {
+              image: `data:${img.mimeType};base64,${img.base64}`,
+              date: p.date,
+              description: p.description || null,
+              source: p.source,
+            };
+          })
+        ),
+        tryGeminiImage(), // run in parallel — adds AI rendering as final slide
+      ]);
+
+      const valid: Array<{ image: string; date: string; description: string | null; source: string }> =
+        fetched.filter(Boolean) as any;
+
+      // Append Gemini rendering if there's room
+      if (geminiDataUri && valid.length < 5) {
+        valid.push({
+          image: geminiDataUri,
+          date: "~1920s",
+          description: "AI-generated historical rendering by Gemini",
+          source: "gemini",
         });
-        if (response.ok) {
-          const data = await response.json();
-          if (data.predictions?.[0]?.bytesBase64Encoded) {
-            return c.json({
-              historicalImage: `data:image/png;base64,${data.predictions[0].bytesBase64Encoded}`,
-              currentStreetView: currentPhotoUrl,
-              source: "imagen",
-              model,
-              location: locationName,
-            });
-          }
-        }
-      } catch (err) { console.log(`Imagen error:`, err); }
+      }
+
+      if (valid.length > 0) {
+        return c.json({
+          historicalImage: valid[0]!.image,
+          historicalImages: valid,
+          currentStreetView: currentPhotoUrl,
+          photoDate: valid[0]!.date,
+          photoDescription: valid[0]!.description,
+          articleTitle: wikiThumb?.title || null,
+          source: "wikipedia",
+          location: locationName,
+        });
+      }
     }
 
-    // ── Step 6: Text description fallback (always succeeds) ───────────────────────
+    // ── Step 4: No real photos — try Gemini image generation alone ───────────────
+    const geminiDataUri = await tryGeminiImage();
+    if (geminiDataUri) {
+      return c.json({
+        historicalImage: geminiDataUri,
+        historicalImages: [{ image: geminiDataUri, date: "~1920s", description: "AI-generated historical rendering by Gemini", source: "gemini" }],
+        currentStreetView: currentPhotoUrl,
+        source: "gemini",
+        location: locationName,
+      });
+    }
+
+    // ── Step 5: Text description fallback (always succeeds) ──────────────────────
     console.log("All image models failed, falling back to text description");
     try {
       const textPrompt = `You are a historian and visual storyteller. Describe in vivid detail what ${placeName} (${locationName}) would have looked like approximately 100 years ago (around the 1920s).

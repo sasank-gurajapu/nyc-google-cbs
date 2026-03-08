@@ -294,19 +294,14 @@ export default function App() {
     setIsProcessing(true);
     setTextInput('');
 
-    // Check if user wants to change location
+    // Check if user wants to change location (broad set of natural voice phrases)
     const lowerContent = content.toLowerCase();
-    const isLocationChange =
-      lowerContent.startsWith('take me to ') ||
-      lowerContent.startsWith('go to ') ||
-      lowerContent.startsWith('switch to ') ||
-      lowerContent.startsWith('explore ') ||
-      lowerContent.startsWith('show me ');
+    const locationPrefixRe =
+      /^(take me to|go to|navigate to|switch to|explore|show me|find|search for|what'?s? (?:in|near|at)|tell me about|what about|let'?s? (?:go to|visit))\s+/i;
+    const isLocationChange = locationPrefixRe.test(lowerContent);
 
     if (isLocationChange) {
-      const locationText = content
-        .replace(/^(take me to|go to|switch to|explore|show me)\s+/i, '')
-        .trim();
+      const locationText = content.replace(locationPrefixRe, '').trim();
 
       if (locationText) {
         const found = await tryGeocodeInput(locationText);
@@ -504,7 +499,9 @@ export default function App() {
     }
   };
 
-  const handleTranscript = (text: string) => sendMessage(text);
+  const sendMessageRef = useRef(sendMessage);
+  useEffect(() => { sendMessageRef.current = sendMessage; });
+  const handleTranscript = useCallback((text: string) => sendMessageRef.current(text), []);
 
   const handleTextSubmit = () => {
     if (textInput.trim() && !isProcessing) sendMessage(textInput.trim());
