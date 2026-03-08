@@ -31,10 +31,11 @@ export interface UseLiveSessionReturn {
   transcripts: LiveTranscript[];
   toolCalls: ToolUsed[];
   structuredData: StructuredDataItem[];
-  connect: () => void;
+  connect: (userLocation?: { latitude: number; longitude: number }) => void;
   disconnect: () => void;
   sendAudio: (base64Pcm: string) => void;
   sendText: (text: string) => void;
+  sendLocation: (latitude: number, longitude: number) => void;
   onAudioReceived: React.MutableRefObject<((base64Pcm: string) => void) | null>;
 }
 
@@ -201,6 +202,13 @@ export function useLiveSession(): UseLiveSessionReturn {
     }
   }, []);
 
+  const sendLocation = useCallback((latitude: number, longitude: number) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: "location", latitude, longitude }));
+      console.log(`[Live] Sent user location: ${latitude}, ${longitude}`);
+    }
+  }, []);
+
   return {
     status,
     isSpeaking,
@@ -212,6 +220,7 @@ export function useLiveSession(): UseLiveSessionReturn {
     disconnect,
     sendAudio,
     sendText,
+    sendLocation,
     onAudioReceived,
   };
 }

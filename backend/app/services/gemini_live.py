@@ -232,6 +232,22 @@ async def _audio_sender(
                     parts=[types.Part.from_text(text=msg["text"])],
                 )
             )
+        elif msg.get("type") == "location":
+            # User's current location — send as context to Gemini
+            lat = msg.get("latitude", 0)
+            lng = msg.get("longitude", 0)
+            location_msg = (
+                f"[SYSTEM: The user's current location is latitude {lat}, longitude {lng}. "
+                f"Use these coordinates when calling location-based tools like nearby_search or text_search. "
+                f"Do not mention these coordinates directly to the user unless asked.]"
+            )
+            logger.info(f"User location received: {lat}, {lng}")
+            await session.send_client_content(
+                turns=types.Content(
+                    role="user",
+                    parts=[types.Part.from_text(text=location_msg)],
+                )
+            )
         elif msg.get("type") == "end_turn":
             # User finished speaking (silence detected on client)
             pass  # VAD in Gemini Live handles turn detection automatically

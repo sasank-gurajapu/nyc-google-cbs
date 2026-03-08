@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback } from "react";
-import { checkHealth, type StructuredDataItem } from "@/lib/api";
+import Image from "next/image";
+import { checkHealth } from "@/lib/api";
 import ChatMessage from "@/components/ChatMessage";
-import StructuredDataRenderer from "@/components/StructuredDataRenderer";
 import ToolsUsed from "@/components/ToolsUsed";
 import AudioWaveform from "@/components/AudioWaveform";
 import { useAudioStream } from "@/hooks/useAudioStream";
@@ -12,18 +12,42 @@ import { useLiveSession } from "@/hooks/useLiveSession";
 interface Message {
   role: "user" | "assistant";
   content: string;
-  structuredData?: StructuredDataItem[];
   toolsUsed?: { name: string; args: Record<string, unknown> }[];
 }
 
 export default function Home() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [apiStatus, setApiStatus] = useState<string>("checking...");
+  const [userLocation, setUserLocation] = useState<{ latitude: number; longitude: number } | null>(null);
+  const [locationError, setLocationError] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // ─── Voice session hooks ───────────────────────────────────────
   const audio = useAudioStream();
   const live = useLiveSession();
+
+  // ─── Get user location on mount ────────────────────────────────
+  useEffect(() => {
+    if (!navigator.geolocation) {
+      setLocationError("Geolocation not supported");
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const loc = {
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+        };
+        setUserLocation(loc);
+        console.log("[Page] User location:", loc);
+      },
+      (error) => {
+        console.error("[Page] Geolocation error:", error);
+        setLocationError("Location access denied");
+      },
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+  }, []);
 
   // Wire audio playback to live session
   useEffect(() => {
@@ -35,6 +59,18 @@ export default function Home() {
   useEffect(() => {
     audio.micMutedRef.current = live.isSpeaking;
   }, [live.isSpeaking, audio.micMutedRef]);
+
+  // Send user location to Gemini once connected
+  const locationSentRef = useRef(false);
+  useEffect(() => {
+    if (live.status === "connected" && userLocation && !locationSentRef.current) {
+      locationSentRef.current = true;
+      live.sendLocation(userLocation.latitude, userLocation.longitude);
+    }
+    if (live.status === "disconnected") {
+      locationSentRef.current = false;
+    }
+  }, [live.status, userLocation, live]);
 
   // Auto-start mic once live session is connected
   const micStartedRef = useRef(false);
@@ -71,8 +107,7 @@ export default function Home() {
         const last = updated[updated.length - 1];
         if (
           t.role === "assistant" &&
-          last?.role === "assistant" &&
-          !last.structuredData?.length
+          last?.role === "assistant"
         ) {
           updated[updated.length - 1] = {
             ...last,
@@ -85,45 +120,6 @@ export default function Home() {
       return updated;
     });
   }, [live.transcripts]);
-
-  // ─── Promote live structured data into the last assistant message ─
-  const lastDataCountRef = useRef(0);
-  useEffect(() => {
-    if (live.structuredData.length <= lastDataCountRef.current) return;
-
-    const newData = live.structuredData.slice(lastDataCountRef.current);
-    lastDataCountRef.current = live.structuredData.length;
-
-    setMessages((prev) => {
-      const updated = [...prev];
-      // Find the last assistant message or create one
-      let lastAssistantIdx = -1;
-      for (let i = updated.length - 1; i >= 0; i--) {
-        if (updated[i].role === "assistant") {
-          lastAssistantIdx = i;
-          break;
-        }
-      }
-
-      if (lastAssistantIdx >= 0) {
-        updated[lastAssistantIdx] = {
-          ...updated[lastAssistantIdx],
-          structuredData: [
-            ...(updated[lastAssistantIdx].structuredData || []),
-            ...newData,
-          ],
-        };
-      } else {
-        // No assistant message yet — create a placeholder
-        updated.push({
-          role: "assistant",
-          content: "",
-          structuredData: newData,
-        });
-      }
-      return updated;
-    });
-  }, [live.structuredData]);
 
   // ─── Promote tool calls into the last assistant message ────────
   const lastToolCountRef = useRef(0);
@@ -159,7 +155,6 @@ export default function Home() {
   useEffect(() => {
     if (live.status === "disconnected") {
       lastProcessedRef.current = 0;
-      lastDataCountRef.current = 0;
       lastToolCountRef.current = 0;
     }
   }, [live.status]);
@@ -196,9 +191,14 @@ export default function Home() {
       {/* Header */}
       <header className="flex items-center justify-between px-6 py-3 border-b border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900">
         <div className="flex items-center gap-3">
-          <h1 className="text-lg font-bold text-zinc-900 dark:text-zinc-50">
-            🗽 NYC Explorer
-          </h1>
+          <Image
+            src="/title.png"
+            alt="Explorer"
+            width={140}
+            height={36}
+            priority
+            className="h-9 w-auto"
+          />
           <span className="text-xs text-zinc-400 dark:text-zinc-500">
             Powered by Gemini + Google Maps
           </span>
@@ -212,6 +212,17 @@ export default function Home() {
               ✨ New Chat
             </button>
           )}
+          {/* Location indicator */}
+          <div className="flex items-center gap-2 text-xs">
+            <span
+              className={`h-2 w-2 rounded-full ${
+                userLocation ? "bg-green-500" : locationError ? "bg-red-500" : "bg-yellow-500 animate-pulse"
+              }`}
+            />
+            <span className="text-zinc-500 dark:text-zinc-400">
+              {userLocation ? "Location ready" : locationError || "Getting location..."}
+            </span>
+          </div>
           <div className="flex items-center gap-2 text-xs">
             <span
               className={`h-2 w-2 rounded-full ${
@@ -230,23 +241,23 @@ export default function Home() {
         <div className="max-w-3xl mx-auto">
           {messages.length === 0 && !isActive && (
             <div className="flex flex-col items-center justify-center h-full min-h-[60vh] text-center">
-              <div className="text-5xl mb-4">🗽</div>
+              <div className="text-5xl mb-4">📍</div>
               <h2 className="text-xl font-semibold text-zinc-700 dark:text-zinc-200 mb-2">
-                Ask anything about NYC
+                Ask anything about places near you
               </h2>
               <p className="text-sm text-zinc-500 dark:text-zinc-400 max-w-md mb-6">
-                Tap the microphone and speak — find places, get directions,
-                explore neighborhoods with your voice.
+                Tap the microphone and speak — find restaurants, get directions,
+                explore your area with your voice.
               </p>
               <div className="flex flex-wrap justify-center gap-2 text-xs text-zinc-400 dark:text-zinc-500">
                 <span className="px-3 py-1.5 rounded-full border border-zinc-200 dark:border-zinc-700">
-                  &quot;Best pizza in Manhattan?&quot;
+                  &quot;Best pizza near me?&quot;
                 </span>
                 <span className="px-3 py-1.5 rounded-full border border-zinc-200 dark:border-zinc-700">
-                  &quot;How do I get to Brooklyn Bridge?&quot;
+                  &quot;How do I get to the nearest park?&quot;
                 </span>
                 <span className="px-3 py-1.5 rounded-full border border-zinc-200 dark:border-zinc-700">
-                  &quot;Parks near Central Park&quot;
+                  &quot;Coffee shops nearby&quot;
                 </span>
               </div>
             </div>
@@ -257,7 +268,7 @@ export default function Home() {
             <div className="flex flex-col items-center justify-center h-full min-h-[60vh] text-center">
               <div className="text-5xl mb-4">🎙️</div>
               <p className="text-zinc-400 dark:text-zinc-500 text-sm animate-pulse">
-                Listening... ask me anything about NYC!
+                Listening... ask me anything!
               </p>
             </div>
           )}
@@ -272,11 +283,6 @@ export default function Home() {
                     <ToolsUsed tools={msg.toolsUsed} />
                   </div>
                 )}
-              {msg.structuredData && msg.structuredData.length > 0 && (
-                <div className="mb-4 ml-0">
-                  <StructuredDataRenderer data={msg.structuredData} />
-                </div>
-              )}
             </div>
           ))}
 
