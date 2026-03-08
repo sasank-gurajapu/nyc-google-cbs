@@ -1,0 +1,16 @@
+# Config with secrets
+config.py
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.env
+.venv/
+venv/
+
+# Node / Next.js
+node_modules/
+frontend/.next/
+frontend/out/
+.DS_Store
